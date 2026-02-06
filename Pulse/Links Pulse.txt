@@ -1,0 +1,3 @@
+https://www.figma.com/design/ejN0wGNquxjfIuoTPwXTby/CMS-Core-Components?node-id=28115-30577&p=f&t=t5mW2WWUhPVsuhTM-11
+https://www.figma.com/design/aRtU6qzJz8lntGlgHMAG94/CMS-Core-Documentation?node-id=8525-51985&p=f&t=N6ibU8xGhU2XqzDn-0
+https://svinfneucomponentslibst.blob.core.windows.net/storybook/index.html?path=/story/design-tokens-borders--docs

@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor de Asientos de Estadio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { overflow: hidden; }
+        
+        #main-viewport {
+            cursor: grab;
+            background-color: #e5e7eb; 
+            overflow: hidden; 
+        }
+        #main-viewport:active { cursor: grabbing; }
+
+        #map-container {
+            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+            background-size: 20px 20px;
+            transform-origin: 0 0; 
+            position: absolute; top: 0; left: 0;
+            width: 10000px; height: 10000px;
+        }
+
+        #map-svg {
+            position: absolute; top: 0; left: 0; overflow: visible;
+        }
+
+        /* ÁREAS */
+        .area-polygon {
+            stroke-width: 1px; cursor: move;
+            transition: stroke-width 0.1s, opacity 0.2s;
+            vector-effect: non-scaling-stroke;
+        }
+        .area-polygon:hover { opacity: 0.85; }
+        .area-polygon.selected {
+            stroke: #2563eb !important; stroke-width: 4px !important;
+            filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3)); stroke-dasharray: 0;
+        }
+        .area-polygon.multi-selected {
+            stroke: #2563eb !important; stroke-width: 3px !important; stroke-dasharray: 4,4;
+        }
+        .area-label {
+            font-family: sans-serif; font-weight: bold; font-size: 14px; fill: #1f2937;
+            pointer-events: none; text-shadow: 0px 1px 2px rgba(255,255,255,0.8);
+        }
+        .front-edge { stroke: #ef4444; stroke-width: 4; pointer-events: none; }
+        .front-arrow { fill: #ef4444; pointer-events: none; } 
+
+        /* ASIENTOS EN MINIATURA */
+        .seat-mini { fill: #10b981; stroke: #059669; stroke-width: 0.5; }
+
+        /* FONDO & UI */
+        .bg-image-wrapper { cursor: default; }
+        .bg-image-wrapper.editable { cursor: move; }
+        .bg-image-frame { fill: none; stroke: transparent; stroke-width: 2; }
+        .bg-image-wrapper.selected .bg-image-frame { stroke: #8b5cf6; stroke-dasharray: 5,5; }
+        .bg-handle { fill: white; stroke: #8b5cf6; stroke-width: 2; cursor: nwse-resize; display: none; }
+        .bg-image-wrapper.selected .bg-handle { display: block; }
+
+        /* Controles (Handles) */
+        .corner-handle { fill: white; stroke: #2563eb; stroke-width: 2; cursor: crosshair; }
+        .edge-handle { fill: #2563eb; stroke: white; stroke-width: 1; }
+        
+        /* Rotación */
+        .rotate-handle-line { stroke: #2563eb; stroke-width: 1; stroke-dasharray: 4; }
+        .rotate-handle-circle { fill: white; stroke: #2563eb; stroke-width: 2; cursor: grab; }
+
+        /* Estructura Visual */
+        .sector-header { background-color: #f3f4f6; font-weight: bold; padding: 6px 8px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; border-radius: 4px; margin-top: 4px; user-select: none; }
+        .sector-header:hover { background-color: #e5e7eb; }
+        .sector-header.active { background-color: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
+        .area-item { padding: 4px 8px 4px 24px; font-size: 12px; cursor: pointer; border-left: 2px solid transparent; display: flex; justify-content: space-between; }
+        .area-item:hover { background-color: #f9fafb; }
+        .area-item.active { background-color: #eff6ff; border-left-color: #3b82f6; font-weight: 500; }
+
+        /* GRID EDITOR */
+        .seat-grid { display: grid; gap: 2px; padding: 20px; background: #f3f4f6; overflow: auto; max-height: 70vh; margin: auto; align-content: start; }
+        .seat-cell { width: 24px; height: 24px; border-radius: 4px; background-color: #e5e7eb; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #6b7280; user-select: none; }
+        .seat-cell.active { background-color: #10b981; color: white; border: 1px solid #059669; }
+        .seat-cell.selected-seat { border: 2px solid #2563eb !important; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3); z-index: 10; transform: scale(1.1); }
+        
+        #selection-marquee { fill: rgba(59, 130, 246, 0.2); stroke: #2563eb; stroke-width: 1; stroke-dasharray: 4, 4; pointer-events: none; display: none; }
+        #selection-marquee.active { display: block; }
+        
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Auxiliares para el grid */
+        .grid-header-col, .grid-header-row {
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px; font-weight: bold; color: #9ca3af;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 h-screen flex flex-col font-sans">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 h-14 flex items-center justify-between px-4 shadow-sm z-30">
+        <div class="flex items-center gap-2">
+            <i data-lucide="armchair" class="text-blue-600"></i>
+            <h1 class="font-bold text-lg hidden md:block">Stadium Map Editor</h1>
+        </div>
+        
+        <div class="flex gap-1 items-center bg-gray-50 p-1 rounded border border-gray-200" id="alignment-tools">
+            <div class="text-[10px] text-gray-400 font-bold uppercase mr-1 px-1">Alinear:</div>
+            <button onclick="alignSelection('top')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Arriba"><i data-lucide="align-vertical-justify-start" class="w-4 h-4"></i></button>
+            <button onclick="alignSelection('bottom')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Abajo"><i data-lucide="align-vertical-justify-end" class="w-4 h-4"></i></button>
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button onclick="alignSelection('left')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Izquierda"><i data-lucide="align-horizontal-justify-start" class="w-4 h-4"></i></button>
+            <button onclick="alignSelection('right')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Derecha"><i data-lucide="align-horizontal-justify-end" class="w-4 h-4"></i></button>
+            
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button onclick="distributeSelection('horizontal')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Distribuir Horizontalmente" id="btn-dist-h">
+                <i data-lucide="stretch-horizontal" class="w-4 h-4"></i>
+            </button>
+            <button onclick="distributeSelection('vertical')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Distribuir Verticalmente" id="btn-dist-v">
+                <i data-lucide="stretch-vertical" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <div class="flex gap-3 items-center">
+            <button id="toggle-seats-btn" onclick="toggleShowSeats()" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold border rounded transition-colors bg-white border-gray-300 text-gray-600 hover:bg-gray-50">
+                <i data-lucide="layout-grid" class="w-4 h-4"></i>
+                <span>Ver Asientos</span>
+            </button>
+
+            <div class="flex items-center gap-1 bg-gray-100 rounded px-1 border border-gray-200">
+                <button onclick="document.getElementById('bgInput').click()" class="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 rounded">
+                    <i data-lucide="image" class="w-4 h-4"></i> <span class="hidden lg:inline">Imagen</span>
+                </button>
+                <div class="w-px h-4 bg-gray-300"></div>
+                <button id="bg-lock-btn" onclick="toggleBgLock()" class="p-1.5 text-gray-500 hover:text-gray-800" title="Bloquear/Desbloquear fondo">
+                    <i id="bg-lock-icon" data-lucide="lock" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <input type="file" id="bgInput" accept="image/*" class="hidden">
+
+            <button onclick="document.getElementById('csvInput').click()" class="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded">
+                <i data-lucide="upload" class="w-4 h-4"></i> Importar
+            </button>
+            <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" class="hidden">
+
+            <button onclick="exportData()" class="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded">
+                <i data-lucide="download" class="w-4 h-4"></i> Exportar
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex flex-1 overflow-hidden relative">
+        
+        <!-- Sidebar -->
+        <aside class="w-80 bg-white border-r border-gray-200 flex flex-col z-20 shadow-lg">
+            <div class="p-4 border-b border-gray-100 bg-gray-50 h-1/2 overflow-y-auto">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="font-semibold text-gray-700 flex items-center gap-2">
+                        <i data-lucide="settings-2" class="w-4 h-4"></i> Propiedades
+                    </h2>
+                    <div id="clipboard-tools" class="flex gap-1 hidden">
+                        <button onclick="copySelectedShape()" class="p-1.5 hover:bg-blue-100 text-blue-600 rounded border border-blue-200 bg-white" title="Copiar Forma">
+                            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        </button>
+                        <button id="btn-paste-shape" onclick="pasteShapeToSelected()" class="p-1.5 hover:bg-green-100 text-green-600 rounded border border-green-200 bg-white opacity-50 cursor-not-allowed" title="Pegar Forma" disabled>
+                            <i data-lucide="clipboard-paste" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="multi-selection-info" class="hidden text-sm p-4 bg-blue-50 text-blue-800 rounded border border-blue-200 text-center">
+                    <span class="font-bold block text-lg mb-1" id="multi-count">0</span> Áreas seleccionadas
+                </div>
+                <div id="bg-edit-info" class="hidden text-sm p-4 bg-purple-50 text-purple-800 rounded border border-purple-200">
+                    <div class="font-bold flex items-center gap-2 mb-1"><i data-lucide="image" class="w-4 h-4"></i> Fondo</div>
+                    <button onclick="toggleBgLock()" class="w-full bg-white border border-purple-200 text-purple-700 py-1 px-2 rounded hover:bg-purple-100 text-xs mt-2">Terminar Edición</button>
+                </div>
+                <div id="no-selection" class="text-sm text-gray-500 italic p-4 text-center border-2 border-dashed rounded bg-gray-50">Selecciona un <b>Sector</b> o un <b>Área</b>.</div>
+                
+                <!-- Formulario de Sector -->
+                <form id="sector-form" class="hidden space-y-3 text-sm border-l-4 border-indigo-500 pl-3">
+                    <div class="text-xs font-bold text-indigo-600 uppercase mb-2">Sector</div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500">Sector ID</label>
+                        <input type="text" id="prop-sec-id" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1 bg-gray-50 font-mono" oninput="updateSelectedSectorFromForm()">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500">Nombre Sector</label>
+                        <input type="text" id="prop-sec-title" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateSelectedSectorFromForm()">
+                    </div>
+                    <div class="pt-2"><button type="button" onclick="deleteSelectedSector()" class="text-red-600 hover:text-red-800 text-xs flex items-center gap-1"><i data-lucide="trash-2" class="w-3 h-3"></i> Eliminar Sector</button></div>
+                </form>
+
+                <!-- Formulario de Área -->
+                <form id="area-form" class="hidden space-y-3 text-sm border-l-4 border-blue-500 pl-3">
+                    <div class="text-xs font-bold text-blue-600 uppercase mb-2">Área</div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500">Area ID</label>
+                        <input type="text" id="prop-area-id" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1 font-mono text-xs" oninput="updateSelectedAreaFromForm()">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500">Nombre Área</label>
+                            <input type="text" id="prop-title" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateSelectedAreaFromForm()">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500">Código</label>
+                            <input type="text" id="prop-code" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateSelectedAreaFromForm()">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500">Asignar a Sector</label>
+                        <select id="prop-sector-select" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" onchange="updateSelectedAreaSector()"></select>
+                    </div>
+                    <button type="button" onclick="openSeatEditor()" class="w-full mt-2 bg-blue-600 text-white py-2 rounded font-medium hover:bg-blue-700 shadow-sm flex justify-center items-center gap-2"><i data-lucide="grid-3x3" class="w-4 h-4"></i> Editar Asientos</button>
+                    <div class="pt-2 border-t mt-2 flex justify-between items-center"><button type="button" onclick="deleteSelectedArea()" class="text-red-600 hover:text-red-800 text-xs flex items-center gap-1"><i data-lucide="trash-2" class="w-3 h-3"></i> Eliminar Área</button></div>
+                </form>
+            </div>
+            <div class="flex-1 overflow-y-auto p-2 bg-gray-50 border-t border-gray-200">
+                <div class="flex justify-between items-center mb-2 px-2 sticky top-0 bg-gray-50 py-1 z-10">
+                    <h3 class="font-bold text-xs text-gray-500 uppercase">Estructura</h3>
+                    <div class="flex gap-1">
+                        <button onclick="createNewSector()" class="text-indigo-600 border border-indigo-200 bg-white px-2 py-1 rounded shadow-sm text-xs font-bold">+ Sec</button>
+                        <button onclick="createNewArea()" class="text-blue-600 border border-blue-200 bg-white px-2 py-1 rounded shadow-sm text-xs font-bold">+ Área</button>
+                    </div>
+                </div>
+                <div id="tree-list" class="space-y-1 pb-4"></div>
+            </div>
+        </aside>
+
+        <!-- Canvas -->
+        <div class="flex-1 relative overflow-hidden flex flex-col">
+            <div class="absolute top-4 right-4 z-50 flex flex-col gap-1 bg-white shadow rounded">
+                <button onclick="adjustZoom(0.1)" class="p-2 hover:bg-gray-100">+</button>
+                <button onclick="resetZoom()" class="p-2 text-xs font-bold hover:bg-gray-100">100%</button>
+                <button onclick="adjustZoom(-0.1)" class="p-2 hover:bg-gray-100">-</button>
+            </div>
+            <main id="main-viewport" class="flex-1 relative bg-gray-200 w-full h-full">
+                <div id="map-container" class="relative origin-top-left">
+                    <svg id="map-svg" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                        <defs id="map-defs">
+                            <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+                                <polygon points="0 0, 6 2, 0 4" fill="#ef4444" />
+                            </marker>
+                        </defs>
+                        <g id="bg-layer"></g>
+                        <g id="areas-layer"></g>
+                        <g id="controls-layer"></g>
+                        <g id="ui-layer">
+                            <rect id="selection-marquee"></rect>
+                        </g>
+                    </svg>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modal Asientos -->
+    <div id="seat-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center backdrop-blur-sm">
+        <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-7xl h-[95vh] flex flex-col">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
+                <div class="flex items-center gap-4">
+                    <h2 class="text-xl font-bold text-gray-800" id="modal-title">Editor</h2>
+                    <div class="flex items-center bg-gray-200 p-1 rounded-lg">
+                        <button id="mode-paint" onclick="setEditMode('paint')" class="px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800">Pintar</button>
+                        <button id="mode-select" onclick="setEditMode('select')" class="px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100">Seleccionar</button>
+                    </div>
+                    <div class="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm ml-4 text-sm">
+                        <span>FIL:</span><input type="number" id="modal-row-min" class="w-12 text-center border rounded" onchange="updateGridDimensions()"><span>-</span><input type="number" id="modal-row-max" class="w-12 text-center border rounded" onchange="updateGridDimensions()">
+                        <div class="w-px h-4 bg-gray-300 mx-2"></div>
+                        <span>COL:</span><input type="number" id="modal-seat-min" class="w-12 text-center border rounded" onchange="updateGridDimensions()"><span>-</span><input type="number" id="modal-seat-max" class="w-12 text-center border rounded" onchange="updateGridDimensions()">
+                    </div>
+                </div>
+                <button onclick="closeSeatEditor()" class="text-gray-500 hover:text-gray-800"><i data-lucide="x"></i></button>
+            </div>
+            <div class="flex-1 overflow-hidden flex bg-gray-100">
+                <div class="flex-1 flex flex-col p-4 border-r border-gray-200 min-w-0">
+                    <div class="flex justify-between mb-2 text-sm text-gray-600 px-2 items-center">
+                        <span id="seat-count-display">0 Asientos</span>
+                        <div class="flex items-center gap-1 bg-white px-2 py-1 rounded shadow-sm border border-gray-200">
+                            <button onclick="expandGrid('top')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-up-from-line" class="w-4 h-4"></i></button>
+                            <button onclick="expandGrid('bottom')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-down-to-line" class="w-4 h-4"></i></button>
+                            <button onclick="expandGrid('left')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-left-from-line" class="w-4 h-4"></i></button>
+                            <button onclick="expandGrid('right')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-right-to-line" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                    <div class="flex-1 border rounded bg-white shadow-inner relative overflow-auto flex justify-center p-8"><div id="grid-container" class="seat-grid select-none"></div></div>
+                </div>
+                <div id="seat-details-panel" class="w-80 bg-white p-4 overflow-y-auto hidden">
+                    <h3 class="font-bold text-gray-700 mb-4 pb-2 border-b">Detalles Asiento</h3>
+                    <div id="seat-edit-form" class="space-y-4">
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase">Seat ID</label><input type="text" id="detail-seat-id" class="w-full mt-1 p-2 border rounded font-mono text-xs bg-gray-50" oninput="updateSelectedSeatData()"></div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label class="block text-xs font-bold text-gray-500 uppercase">Fila (G)</label><input type="text" id="detail-pos-row" class="w-full mt-1 p-2 border rounded bg-gray-100" disabled></div>
+                            <div><label class="block text-xs font-bold text-gray-500 uppercase">Col (G)</label><input type="text" id="detail-pos-col" class="w-full mt-1 p-2 border rounded bg-gray-100" disabled></div>
+                        </div>
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase">Num Fila</label><input type="text" id="detail-row-num" class="w-full mt-1 p-2 border rounded" oninput="updateSelectedSeatData()"></div>
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase">Num Asiento</label><input type="text" id="detail-seat-num" class="w-full mt-1 p-2 border rounded" oninput="updateSelectedSeatData()"></div>
+                        <div class="pt-4 border-t"><button onclick="deleteSelectedSeat()" class="w-full py-2 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 font-medium">Eliminar</button></div>
+                    </div>
+                    <div id="seat-no-selection" class="text-center text-gray-400 py-10"><i data-lucide="mouse-pointer-2" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p>Selecciona un asiento.</p></div>
+                </div>
+            </div>
+            <div class="p-4 border-t flex justify-end gap-2 bg-gray-50 rounded-b-lg">
+                <button onclick="fillAllSeats()" class="px-4 py-2 text-sm bg-white border border-gray-300 rounded text-gray-700">Llenar</button>
+                <button onclick="clearAllSeats()" class="px-4 py-2 text-sm bg-white border border-red-300 rounded text-red-600">Vaciar</button>
+                <button onclick="closeSeatEditor()" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">Hecho</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Estado ---
+        const AppState = {
+            seats: [], 
+            sectors: [{ id: 'default-sec', title: 'Sector General' }], 
+            areas: [], 
+            background: { url: null, x: 0, y: 0, w: 0, h: 0, locked: true, selected: false },
+            zoom: 1, 
+            selectedAreaIds: [], 
+            selectedSectorId: null, 
+            isDraggingMap: false, panX: 0, panY: 0,
+            interactionMode: null, activeAreaId: null, activeCornerIndex: -1, activeEdgeIndex: -1, initialClickPoint: { x: 0, y: 0 },
+            initialPointsMap: {}, initialCenter: { x: 0, y: 0 }, initialAngle: 0, initialBgRect: { x:0, y:0, w:0, h:0 },
+            boxSelectStart: { x: 0, y: 0 },
+            boxSelectInitialSelection: [],
+            seatEditMode: 'paint', selectedSeatLoc: null,
+            showSeatsInMap: false,
+            shapeClipboard: null,
+            expandedSectors: new Set(),
+            
+            // Contadores para IDs temporales
+            areaCounter: 0,
+            sectorCounter: 0,
+            seatCounter: 0
+        };
+
+        const GRID_STEP = 10; 
+        let isDrawingSeats = false;
+        let drawingMode = true;
+
+        lucide.createIcons();
+
+        // --- 2. Utils ---
+        function getMousePos(evt) {
+            const viewport = document.getElementById('main-viewport');
+            const rect = viewport.getBoundingClientRect();
+            return {
+                x: (evt.clientX - rect.left - AppState.panX) / AppState.zoom,
+                y: (evt.clientY - rect.top - AppState.panY) / AppState.zoom
+            };
+        }
+
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+        
+        function getCentroid(points) {
+            let x = 0, y = 0; points.forEach(p => { x += p.x; y += p.y; });
+            return { x: x / points.length, y: y / points.length };
+        }
+        
+        function getBounds(points) {
+            const xs = points.map(p => p.x), ys = points.map(p => p.y);
+            return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+        }
+        
+        function getSelectionBounds() {
+            if (AppState.selectedAreaIds.length === 0) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            AppState.selectedAreaIds.forEach(id => {
+                const area = AppState.areas.find(a => a.id === id);
+                if (area) {
+                    area.points.forEach(p => {
+                        if (p.x < minX) minX = p.x;
+                        if (p.x > maxX) maxX = p.x;
+                        if (p.y < minY) minY = p.y;
+                        if (p.y > maxY) maxY = p.y;
+                    });
+                }
+            });
+            return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY, centerX: (minX+maxX)/2, centerY: (minY+maxY)/2 };
+        }
+
+        function getSectorColor(index) {
+            if (index === -1) return { fill: "#e5e7eb", stroke: "#9ca3af" };
+            const hue = (200 + index * 137.508) % 360;
+            return { fill: `hsl(${hue}, 60%, 88%)`, stroke: `hsl(${hue}, 50%, 45%)` };
+        }
+
+        // --- 3. Funciones Portapapeles ---
+        function copySelectedShape() {
+            if (AppState.selectedAreaIds.length === 0) return;
+            const areaId = AppState.selectedAreaIds[AppState.selectedAreaIds.length - 1];
+            const area = AppState.areas.find(a => a.id === areaId);
+            if (!area) return;
+            const center = getCentroid(area.points);
+            AppState.shapeClipboard = {
+                relativePoints: area.points.map(p => ({ x: p.x - center.x, y: p.y - center.y })),
+                rowMin: area.rowMin, rowMax: area.rowMax,
+                seatMin: area.seatMin, seatMax: area.seatMax
+            };
+            updateUI();
+        }
+
+        function pasteShapeToSelected() {
+            if (!AppState.shapeClipboard || AppState.selectedAreaIds.length === 0) return;
+            AppState.selectedAreaIds.forEach(id => {
+                const area = AppState.areas.find(a => a.id === id);
+                if (area) {
+                    const currentCenter = getCentroid(area.points);
+                    area.points = AppState.shapeClipboard.relativePoints.map(p => ({
+                        x: p.x + currentCenter.x,
+                        y: p.y + currentCenter.y
+                    }));
+                    area.rowMin = AppState.shapeClipboard.rowMin;
+                    area.rowMax = AppState.shapeClipboard.rowMax;
+                    area.seatMin = AppState.shapeClipboard.seatMin;
+                    area.seatMax = AppState.shapeClipboard.seatMax;
+                }
+            });
+            renderMap();
+            updateUI();
+        }
+
+        // --- 4. CSV Import Logic ---
+        function parseCSV(text) {
+            text = text.replace(/^\uFEFF/, '');
+            const lines = text.split(/\r\n|\n/).filter(l => l.trim() !== '');
+            if (lines.length === 0) return [];
+            
+            const firstLine = lines[0];
+            const semi = (firstLine.match(/;/g)||[]).length;
+            const comma = (firstLine.match(/,/g)||[]).length;
+            const delimiter = semi > comma ? ';' : ',';
+
+            const parseLine = (line) => {
+                const row = []; let current = ''; let insideQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"') { if (insideQuotes && line[i+1] === '"') { current += '"'; i++; } else { insideQuotes = !insideQuotes; } }
+                    else if (char === delimiter && !insideQuotes) { row.push(current); current = ''; } else { current += char; }
+                }
+                row.push(current); return row;
+            };
+
+            const headers = parseLine(firstLine).map(h => h.trim().toUpperCase());
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = parseLine(lines[i]);
+                if (values.length < 2) continue;
+                const entry = {};
+                headers.forEach((h, idx) => { entry[h] = values[idx] ? values[idx].trim() : ''; });
+                data.push(entry);
+            }
+            return data;
+        }
+
+        document.getElementById('csvInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => processImportedData(parseCSV(evt.target.result));
+            reader.readAsText(file);
+        });
+
+        document.getElementById('bgInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                const tempImg = new Image();
+                tempImg.src = url;
+                tempImg.onload = () => {
+                    AppState.background.url = url; 
+                    AppState.background.w = tempImg.naturalWidth; 
+                    AppState.background.h = tempImg.naturalHeight;
+                    AppState.background.locked = false; 
+                    AppState.background.selected = true;
+                    AppState.background.x = 0;
+                    AppState.background.y = 0;
+                    renderMap();
+                };
+            }
+        });
+
+        function processImportedData(data) {
+            AppState.seats = []; AppState.sectors = []; AppState.areas = [];
+            AppState.selectedAreaIds = []; AppState.selectedSectorId = null;
+            AppState.expandedSectors.clear(); 
+
+            data.sort((a, b) => {
+                const sA = (a['SECTOR TITLE'] || '').toUpperCase();
+                const sB = (b['SECTOR TITLE'] || '').toUpperCase();
+                if (sA !== sB) return sA.localeCompare(sB);
+                const aA = (a['AREA TITLE'] || '').toUpperCase();
+                const aB = (b['AREA TITLE'] || '').toUpperCase();
+                return aA.localeCompare(aB);
+            });
+
+            const sectorsMap = new Map();
+            data.forEach(row => {
+                const secId = row['SECTOR ID'] || 'UNKNOWN';
+                const secTitle = row['SECTOR TITLE'] || 'Sector Sin Nombre';
+                const areaId = row['AREA ID'] || 'UNKNOWN';
+                const areaTitle = row['AREA TITLE'] || 'Área Sin Nombre';
+                const areaCode = row['AREA CODE'] || 'NA';
+                const rowPos = parseInt(row['ROW POSITION']) || 1;
+                const seatPos = parseInt(row['SEAT POSITION']) || 1;
+                const savedShape = row['AREA SHAPE'];
+
+                if (!sectorsMap.has(secId)) {
+                    const newSector = { id: secId, title: secTitle };
+                    AppState.sectors.push(newSector);
+                    sectorsMap.set(secId, { obj: newSector, areaIds: [] });
+                }
+
+                let area = AppState.areas.find(a => a.id === areaId);
+                if (!area) {
+                    let restoredPoints = null;
+                    if (savedShape && savedShape.startsWith('[')) { try { restoredPoints = JSON.parse(savedShape); } catch(e) {} }
+                    area = {
+                        id: areaId, title: areaTitle, code: areaCode, sectorId: secId,
+                        rowMin: rowPos, rowMax: rowPos, seatMin: seatPos, seatMax: seatPos,
+                        points: restoredPoints || []
+                    };
+                    AppState.areas.push(area);
+                } else {
+                    area.rowMin = Math.min(area.rowMin, rowPos);
+                    area.rowMax = Math.max(area.rowMax, rowPos);
+                    area.seatMin = Math.min(area.seatMin, seatPos);
+                    area.seatMax = Math.max(area.seatMax, seatPos);
+                }
+
+                AppState.seats.push({
+                    seatId: row['SEAT ID'] || generateUUID(), areaId, areaTitle, areaCode, sectorId: secId, sectorTitle: secTitle,
+                    rowPos, seatPos, rowNum: row['ROW NUMBER'] || '', seatNum: row['SEAT NUMBER'] || ''
+                });
+            });
+
+            let startX = 100, currentY = 100;
+            AppState.sectors.sort((a,b) => a.title.localeCompare(b.title));
+            AppState.sectors.forEach(sector => {
+                let currentX = startX;
+                const sectorAreas = AppState.areas.filter(a => a.sectorId === sector.id).sort((a,b) => a.title.localeCompare(b.title));
+                sectorAreas.forEach(area => {
+                    if (area.points.length === 0) {
+                        area.points = [{x: currentX, y: currentY}, {x: currentX + 160, y: currentY}, {x: currentX + 160, y: currentY + 100}, {x: currentX, y: currentY + 100}];
+                        currentX += 170;
+                    }
+                });
+                if (sectorAreas.length > 0) currentY += 180;
+            });
+
+            renderMap(); renderTreeList(); updateUI(); resetZoom();
+        }
+
+        // --- Export ---
+        function exportData() {
+            const headers = ['SECTOR ID','SECTOR TITLE','AREA ID','AREA TITLE','AREA CODE','SEAT ID','ROW POSITION','SEAT POSITION','ROW NUMBER','SEAT NUMBER', 'AREA POSITION', 'AREA SHAPE'];
+            let csvContent = headers.join(',') + "\n";
+            const escape = (val) => {
+                if (val === null || val === undefined) return '';
+                const str = String(val);
+                if (str.includes(',') || str.includes('"') || str.includes('\n')) return `"${str.replace(/"/g, '""')}"`;
+                return str;
+            };
+            AppState.areas.forEach(area => {
+                const areaSeats = AppState.seats.filter(s => s.areaId === area.id);
+                const parentSector = AppState.sectors.find(s => s.id === area.sectorId);
+                areaSeats.forEach(seat => {
+                    const posStr = `${Math.round(area.points[0].x)},${Math.round(area.points[0].y)}`;
+                    const shapeStr = JSON.stringify(area.points);
+                    csvContent += [
+                        escape(parentSector?.id || seat.sectorId), escape(parentSector?.title || seat.sectorTitle),
+                        escape(seat.areaId), escape(area.title), escape(area.code),
+                        escape(seat.seatId), seat.rowPos, seat.seatPos, escape(seat.rowNum), escape(seat.seatNum), escape(posStr), escape(shapeStr)
+                    ].join(',') + "\n";
+                });
+            });
+            const url = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+            const link = document.createElement("a");
+            link.href = url; link.download = "stadium_map_export.csv"; link.click();
+        }
+
+        // --- 5. Render Map ---
+        const mapContainer = document.getElementById('map-container');
+        const bgLayer = document.getElementById('bg-layer');
+        const areasLayer = document.getElementById('areas-layer');
+        const mapDefs = document.getElementById('map-defs');
+
+        function updateTransform() {
+            mapContainer.style.transform = `translate(${AppState.panX}px, ${AppState.panY}px) scale(${AppState.zoom})`;
+        }
+
+        function renderMap() {
+            bgLayer.innerHTML = '';
+            const oldClips = mapDefs.querySelectorAll('.area-clip');
+            oldClips.forEach(c => c.remove());
+
+            if (AppState.background.url) {
+                const img = document.createElementNS("http://www.w3.org/2000/svg", "image");
+                img.setAttribute("href", AppState.background.url);
+                img.setAttribute("x", AppState.background.x); img.setAttribute("y", AppState.background.y);
+                img.setAttribute("width", AppState.background.w); img.setAttribute("height", AppState.background.h);
+                if (!AppState.background.locked) img.addEventListener('mousedown', startMoveBackground);
+                bgLayer.appendChild(img);
+            }
+
+            areasLayer.innerHTML = '';
+            const sortedAreas = [...AppState.areas].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+
+            sortedAreas.forEach(area => {
+                const isSelected = AppState.selectedAreaIds.includes(area.id);
+                const isActive = AppState.selectedAreaIds[AppState.selectedAreaIds.length - 1] === area.id;
+                const colors = getSectorColor(AppState.sectors.findIndex(s => s.id === area.sectorId));
+
+                if (AppState.showSeatsInMap) {
+                    const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+                    clipPath.id = `clip-${area.id}`;
+                    clipPath.classList.add("area-clip");
+                    const clipPoly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    clipPoly.setAttribute("points", area.points.map(p => `${p.x},${p.y}`).join(" "));
+                    clipPath.appendChild(clipPoly);
+                    mapDefs.appendChild(clipPath);
+                }
+
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.classList.toggle("single-selected-group", isActive);
+                
+                const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                poly.setAttribute("points", area.points.map(p => `${p.x},${p.y}`).join(" "));
+                poly.setAttribute("style", `fill: ${colors.fill}; stroke: ${colors.stroke};`);
+                poly.className.baseVal = `area-polygon ${isSelected ? (AppState.selectedAreaIds.length > 1 ? "multi-selected" : "selected") : ""}`;
+                poly.addEventListener('mousedown', (e) => startMoveArea(e, area));
+                poly.addEventListener('dblclick', (e) => { e.stopPropagation(); openSeatEditor(); });
+                g.appendChild(poly);
+
+                if (AppState.showSeatsInMap) {
+                    const gSeats = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                    gSeats.setAttribute("clip-path", `url(#clip-${area.id})`);
+                    gSeats.setAttribute("pointer-events", "none");
+
+                    const p0 = area.points[0], p1 = area.points[1], p3 = area.points[3];
+                    const dx1 = p1.x - p0.x, dy1 = p1.y - p0.y, len1 = Math.sqrt(dx1*dx1+dy1*dy1);
+                    const dx3 = p3.x - p0.x, dy3 = p3.y - p0.y, len3 = Math.sqrt(dx3*dx3+dy3*dy3);
+                    const ux = dx1 / len1, uy = dy1 / len1, vx = dx3 / len3, vy = dy3 / len3; 
+
+                    AppState.seats.filter(s => s.areaId === area.id).forEach(seat => {
+                        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        const worldX = p0.x + ((seat.seatPos - area.seatMin) * GRID_STEP + 2) * ux + ((area.rowMax - seat.rowPos) * GRID_STEP + 2) * vx;
+                        const worldY = p0.y + ((seat.seatPos - area.seatMin) * GRID_STEP + 2) * uy + ((area.rowMax - seat.rowPos) * GRID_STEP + 2) * vy;
+                        rect.setAttribute("x", worldX); rect.setAttribute("y", worldY);
+                        rect.setAttribute("width", GRID_STEP - 3); rect.setAttribute("height", GRID_STEP - 3);
+                        rect.setAttribute("rx", 1); rect.className.baseVal = "seat-mini";
+                        rect.setAttribute("transform", `rotate(${Math.atan2(uy, ux) * (180/Math.PI)}, ${worldX}, ${worldY})`);
+                        gSeats.appendChild(rect);
+                    });
+                    g.appendChild(gSeats);
+                }
+
+                const c = getCentroid(area.points);
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("x", c.x); txt.setAttribute("y", c.y); 
+                txt.setAttribute("text-anchor", "middle"); txt.setAttribute("dominant-baseline", "middle");
+                txt.className.baseVal = "area-label"; txt.textContent = area.code;
+                g.appendChild(txt);
+
+                // Flecha roja de frente
+                const p3l = area.points[2], p4l = area.points[3];
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("class", "front-edge"); line.setAttribute("x1", p4l.x); line.setAttribute("y1", p4l.y); line.setAttribute("x2", p3l.x); line.setAttribute("y2", p3l.y);
+                g.appendChild(line);
+
+                const mx = (p3l.x+p4l.x)/2, my = (p3l.y+p4l.y)/2, dx = p3l.x-p4l.x, dy = p3l.y-p4l.y, l = Math.sqrt(dx*dx+dy*dy);
+                const nx = -dy/l, ny = dx/l;
+                const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                arrow.setAttribute("class", "front-arrow");
+                arrow.setAttribute("x1", mx); arrow.setAttribute("y1", my); 
+                arrow.setAttribute("x2", mx+nx*18); arrow.setAttribute("y2", my+ny*18); 
+                arrow.setAttribute("stroke", "#ef4444"); 
+                arrow.setAttribute("stroke-width", "3"); 
+                arrow.setAttribute("marker-end", "url(#arrowhead)"); 
+                g.appendChild(arrow);
+
+                if (isActive) {
+                    area.points.forEach((p, i) => {
+                        const ch = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                        ch.setAttribute("cx", p.x); ch.setAttribute("cy", p.y); ch.setAttribute("r", 5);
+                        ch.className.baseVal = "corner-handle"; ch.addEventListener('mousedown', (e) => startMoveCorner(e, area, i));
+                        g.appendChild(ch);
+
+                        const nextI = (i + 1) % 4, pNext = area.points[nextI];
+                        const eh = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        eh.setAttribute("x", (p.x + pNext.x) / 2 - 5); eh.setAttribute("y", (p.y + pNext.y) / 2 - 5);
+                        eh.setAttribute("width", 10); eh.setAttribute("height", 10);
+                        eh.style.cursor = (i === 0 || i === 2) ? 'ns-resize' : 'ew-resize';
+                        eh.className.baseVal = "edge-handle"; eh.addEventListener('mousedown', (e) => startMoveEdge(e, area, i));
+                        g.appendChild(eh);
+                    });
+                    const tmX = (area.points[0].x+area.points[1].x)/2, tmY = (area.points[0].y+area.points[1].y)/2;
+                    const vdx = tmX-c.x, vdy = tmY-c.y, vl = Math.sqrt(vdx*vdx+vdy*vdy);
+                    const rl = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    rl.setAttribute("x1", tmX); rl.setAttribute("y1", tmY); rl.setAttribute("x2", tmX+(vdx/vl)*30); rl.setAttribute("y2", tmY+(vdy/vl)*30);
+                    rl.className.baseVal = "rotate-handle-line"; g.appendChild(rl);
+                    const rc = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    rc.setAttribute("cx", tmX+(vdx/vl)*30); rc.setAttribute("cy", tmY+(vdy/vl)*30); rc.setAttribute("r", 7);
+                    rc.className.baseVal = "rotate-handle-circle"; rc.addEventListener('mousedown', (e) => startRotateArea(e, area));
+                    g.appendChild(rc);
+                }
+                areasLayer.appendChild(g);
+            });
+        }
+
+        // --- 6. Interacciones Estructura ---
+        function toggleSectorExpand(sectorId) {
+            if (AppState.expandedSectors.has(sectorId)) AppState.expandedSectors.delete(sectorId);
+            else AppState.expandedSectors.add(sectorId);
+            renderTreeList();
+        }
+
+        function renderTreeList() {
+            const list = document.getElementById('tree-list'); list.innerHTML = '';
+            const sortedSectors = [...AppState.sectors].sort((a,b) => (a.title || "").localeCompare(b.title || ""));
+            
+            sortedSectors.forEach(sector => {
+                const isExpanded = AppState.expandedSectors.has(sector.id);
+                const secContainer = document.createElement('div');
+                secContainer.className = "mb-1";
+                
+                const secHeader = document.createElement('div');
+                secHeader.className = `sector-header ${AppState.selectedSectorId === sector.id ? 'active' : ''}`;
+                secHeader.innerHTML = `
+                    <div class="flex items-center gap-1">
+                        <i data-lucide="${isExpanded ? 'chevron-down' : 'chevron-right'}" class="w-3 h-3 text-gray-400"></i>
+                        <i data-lucide="folder" class="w-3 h-3 text-indigo-500"></i>
+                        <span class="truncate font-bold">${sector.title || sector.id}</span>
+                    </div>
+                `;
+                secHeader.onclick = (e) => {
+                    toggleSectorExpand(sector.id);
+                    selectSector(sector.id);
+                };
+                secContainer.appendChild(secHeader);
+
+                if (isExpanded) {
+                    const areas = AppState.areas.filter(a => a.sectorId === sector.id).sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+                    areas.forEach(area => {
+                        const item = document.createElement('div');
+                        item.className = `area-item ${AppState.selectedAreaIds.includes(area.id) ? 'active' : ''}`;
+                        item.innerHTML = `<span class="truncate">${area.title}</span>`;
+                        item.onclick = (e) => { 
+                            e.stopPropagation(); 
+                            if (e.ctrlKey || e.metaKey) toggleSelection(area.id, true); 
+                            else toggleSelection(area.id, false); 
+                            AppState.activeAreaId = area.id; 
+                            renderMap(); 
+                        };
+                        secContainer.appendChild(item);
+                    });
+                }
+                list.appendChild(secContainer);
+            });
+            lucide.createIcons();
+        }
+
+        function createNewSector() {
+            AppState.sectorCounter++;
+            const tempId = `temp-sec-${AppState.sectorCounter}`;
+            const tempTitle = `Nuevo Sector ${AppState.sectorCounter}`;
+            
+            AppState.sectors.push({ id: tempId, title: tempTitle });
+            AppState.expandedSectors.add(tempId); 
+            
+            // Seleccionar el nuevo sector para editarlo inmediatamente
+            selectSector(tempId);
+            renderTreeList();
+        }
+
+        function createNewArea() {
+            const targetSectorId = AppState.selectedSectorId || AppState.sectors[0]?.id || 'default-sec';
+            if (AppState.sectors.length === 0) {
+                const defId = 'default-sec';
+                AppState.sectors.push({ id: defId, title: 'Sector General' });
+            }
+            
+            // ID TEMPORAL INCREMENTAL
+            AppState.areaCounter++;
+            const newId = `temp-area-${AppState.areaCounter}`;
+            
+            const viewport = document.getElementById('main-viewport');
+            const rect = viewport.getBoundingClientRect();
+            
+            const offset = (AppState.areas.length % 10) * 20; 
+            const startX = (rect.width/2 - AppState.panX) / AppState.zoom + offset;
+            const startY = (rect.height/2 - AppState.panY) / AppState.zoom + offset;
+
+            AppState.areas.push({ 
+                id: newId, title: `Nueva Área ${AppState.areaCounter}`, code: `A${AppState.areaCounter}`, sectorId: targetSectorId, 
+                points: [{x:startX,y:startY},{x:startX+160,y:startY},{x:startX+160,y:startY+100},{x:startX,y:startY+100}], 
+                rowMin: 1, rowMax: 5, seatMin: 1, seatMax: 10 
+            });
+            
+            AppState.expandedSectors.add(targetSectorId); 
+            toggleSelection(newId, false); 
+            renderMap(); 
+            updateUI();
+        }
+
+        // --- 7. Eventos de Mouse ---
+        function startMoveArea(e, area) {
+            e.stopPropagation();
+            if (!e.shiftKey && !e.ctrlKey) toggleSelection(area.id, false);
+            else toggleSelection(area.id, true);
+            AppState.interactionMode = 'move_area'; AppState.initialClickPoint = getMousePos(e);
+            AppState.initialPointsMap = {};
+            AppState.selectedAreaIds.forEach(id => { const a = AppState.areas.find(ar => ar.id === id); if(a) AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points)); });
+            renderMap(); updateUI();
+        }
+
+        function startMoveCorner(e, area, idx) {
+            e.stopPropagation();
+            AppState.interactionMode = 'move_corner'; AppState.activeAreaId = area.id; AppState.activeCornerIndex = idx;
+            AppState.initialClickPoint = getMousePos(e); AppState.initialPointsMap = {[area.id]: JSON.parse(JSON.stringify(area.points))};
+        }
+
+        function startMoveEdge(e, area, edgeIdx) {
+            e.stopPropagation();
+            AppState.interactionMode = 'move_edge'; AppState.activeAreaId = area.id; AppState.activeEdgeIndex = edgeIdx;
+            AppState.initialClickPoint = getMousePos(e); AppState.initialPointsMap = {};
+            AppState.selectedAreaIds.forEach(id => { const a = AppState.areas.find(ar => ar.id === id); if(a) AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points)); });
+        }
+
+        function startRotateArea(e, area) {
+            e.stopPropagation();
+            AppState.interactionMode = 'rotate_area'; AppState.activeAreaId = area.id;
+            AppState.initialCenter = getCentroid(area.points);
+            AppState.initialPointsMap = {[area.id]: JSON.parse(JSON.stringify(area.points))};
+            const m = getMousePos(e); AppState.initialAngle = Math.atan2(m.y - AppState.initialCenter.y, m.x - AppState.initialCenter.x);
+        }
+
+        function startMoveBackground(e) {
+            e.stopPropagation(); AppState.interactionMode = 'move_bg';
+            AppState.initialClickPoint = getMousePos(e); AppState.initialBgRect = {x: AppState.background.x, y: AppState.background.y};
+        }
+
+        function toggleBgLock() {
+            AppState.background.locked = !AppState.background.locked;
+            const icon = document.getElementById('bg-lock-icon');
+            icon.setAttribute('data-lucide', AppState.background.locked ? 'lock' : 'unlock');
+            lucide.createIcons();
+            renderMap();
+        }
+
+        document.addEventListener('mousemove', (e) => {
+            if (!AppState.interactionMode) return;
+            const m = getMousePos(e), dx = m.x - AppState.initialClickPoint.x, dy = m.y - AppState.initialClickPoint.y;
+            if (AppState.interactionMode === 'move_area') {
+                AppState.selectedAreaIds.forEach(id => { const a = AppState.areas.find(ar => ar.id === id); if(a && AppState.initialPointsMap[id]) a.points = AppState.initialPointsMap[id].map(p => ({x: p.x+dx, y: p.y+dy})); });
+            } else if (AppState.interactionMode === 'move_corner') {
+                const a = AppState.areas.find(ar => ar.id === AppState.activeAreaId);
+                a.points[AppState.activeCornerIndex] = {x: AppState.initialPointsMap[a.id][AppState.activeCornerIndex].x+dx, y: AppState.initialPointsMap[a.id][AppState.activeCornerIndex].y+dy};
+            } else if (AppState.interactionMode === 'move_edge') {
+                const activeArea = AppState.areas.find(ar => ar.id === AppState.activeAreaId);
+                const i1 = AppState.activeEdgeIndex, i2 = (i1 + 1) % 4;
+                const p1 = AppState.initialPointsMap[activeArea.id][i1], p2 = AppState.initialPointsMap[activeArea.id][i2];
+                const evx = p2.x - p1.x, evy = p2.y - p1.y, len = Math.sqrt(evx*evx+evy*evy);
+                const nx = -evy/len, ny = evx/len, dot = dx*nx + dy*ny;
+                AppState.selectedAreaIds.forEach(id => { const a = AppState.areas.find(ar => ar.id === id); if(a && AppState.initialPointsMap[id]) { a.points[i1] = {x: AppState.initialPointsMap[id][i1].x + dot*nx, y: AppState.initialPointsMap[id][i1].y + dot*ny}; a.points[i2] = {x: AppState.initialPointsMap[id][i2].x + dot*nx, y: AppState.initialPointsMap[id][i2].y + dot*ny}; } });
+            } else if (AppState.interactionMode === 'rotate_area') {
+                const a = AppState.areas.find(ar => ar.id === AppState.activeAreaId);
+                const da = Math.atan2(m.y - AppState.initialCenter.y, m.x - AppState.initialCenter.x) - AppState.initialAngle;
+                const cos = Math.cos(da), sin = Math.sin(da), cx = AppState.initialCenter.x, cy = AppState.initialCenter.y;
+                a.points = AppState.initialPointsMap[a.id].map(p => ({x: cx+(p.x-cx)*cos-(p.y-cy)*sin, y: cy+(p.x-cx)*sin+(p.y-cy)*cos}));
+            } else if (AppState.interactionMode === 'move_bg') {
+                AppState.background.x = AppState.initialBgRect.x + dx; AppState.background.y = AppState.initialBgRect.y + dy;
+            }
+            renderMap();
+        });
+
+        document.addEventListener('mouseup', () => {
+            AppState.interactionMode = null;
+        });
+
+        const viewportMain = document.getElementById('main-viewport');
+        viewportMain.addEventListener('mousedown', (e) => {
+            if (e.target.id === 'main-viewport' || e.target.id === 'map-svg') {
+                AppState.isDraggingMap = true; AppState.dragStart = {x: e.clientX, y: e.clientY};
+                AppState.selectedAreaIds = []; AppState.selectedSectorId = null; updateUI(); renderMap();
+            }
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (AppState.isDraggingMap) {
+                AppState.panX += e.clientX - AppState.dragStart.x; AppState.panY += e.clientY - AppState.dragStart.y;
+                AppState.dragStart = {x: e.clientX, y: e.clientY}; updateTransform();
+            }
+        });
+        document.addEventListener('mouseup', () => AppState.isDraggingMap = false);
+
+        function resetZoom() { AppState.zoom = 1; AppState.panX = 0; AppState.panY = 0; updateTransform(); }
+        function adjustZoom(d) { 
+            const viewport = document.getElementById('main-viewport');
+            const rect = viewport.getBoundingClientRect();
+            const wx = (rect.width/2 - AppState.panX) / AppState.zoom, wy = (rect.height/2 - AppState.panY) / AppState.zoom;
+            AppState.zoom = Math.max(0.1, Math.min(5, AppState.zoom + d));
+            AppState.panX = rect.width/2 - wx * AppState.zoom; AppState.panY = rect.height/2 - wy * AppState.zoom;
+            updateTransform();
+        }
+
+        function selectSector(id) { 
+            AppState.selectedSectorId = id; 
+            AppState.selectedAreaIds = []; 
+            updateUI(); 
+        }
+        
+        function toggleSelection(id, add) {
+            if (add) { 
+                if (AppState.selectedAreaIds.includes(id)) AppState.selectedAreaIds = AppState.selectedAreaIds.filter(i => i !== id); 
+                else AppState.selectedAreaIds.push(id); 
+            } else {
+                AppState.selectedAreaIds = [id];
+            }
+            AppState.selectedSectorId = null;
+            updateUI();
+        }
+
+        function toggleShowSeats() {
+            AppState.showSeatsInMap = !AppState.showSeatsInMap;
+            const btn = document.getElementById('toggle-seats-btn');
+            btn.classList.toggle('bg-blue-600', AppState.showSeatsInMap);
+            btn.classList.toggle('text-white', AppState.showSeatsInMap);
+            renderMap();
+        }
+
+        function updateUI() {
+            renderTreeList();
+            const areaForm = document.getElementById('area-form'), sectorForm = document.getElementById('sector-form'), noSel = document.getElementById('no-selection'), multi = document.getElementById('multi-selection-info'), bg = document.getElementById('bg-edit-info');
+            [areaForm, sectorForm, noSel, multi, bg].forEach(el => el.classList.add('hidden'));
+            
+            if (!AppState.background.locked && AppState.background.selected) {
+                bg.classList.remove('hidden');
+            } else if (AppState.selectedAreaIds.length === 1) {
+                areaForm.classList.remove('hidden'); 
+                populateAreaForm(); 
+                document.getElementById('clipboard-tools').classList.remove('hidden');
+            } else if (AppState.selectedAreaIds.length > 1) {
+                multi.classList.remove('hidden'); 
+                document.getElementById('multi-count').innerText = AppState.selectedAreaIds.length; 
+                document.getElementById('clipboard-tools').classList.remove('hidden');
+            } else if (AppState.selectedSectorId) {
+                sectorForm.classList.remove('hidden'); 
+                populateSectorForm(); 
+            } else {
+                noSel.classList.remove('hidden');
+            }
+
+            const btnP = document.getElementById('btn-paste-shape');
+            btnP.disabled = !AppState.shapeClipboard; btnP.classList.toggle('opacity-50', !AppState.shapeClipboard);
+            lucide.createIcons();
+        }
+
+        // --- Editor Asientos ---
+        function openSeatEditor() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if (!a) return;
+            document.getElementById('modal-title').innerText = `${a.title} (${a.code})`;
+            document.getElementById('modal-row-min').value = a.rowMin;
+            document.getElementById('modal-row-max').value = a.rowMax;
+            document.getElementById('modal-seat-min').value = a.seatMin;
+            document.getElementById('modal-seat-max').value = a.seatMax;
+            setEditMode('paint'); AppState.selectedSeatLoc = null; updateDetailPanel();
+            document.getElementById('seat-modal').classList.remove('hidden'); renderSeatGrid(a);
+        }
+        function closeSeatEditor() { renderMap(); document.getElementById('seat-modal').classList.add('hidden'); }
+        function setEditMode(mode) {
+            AppState.seatEditMode = mode;
+            ['paint','select'].forEach(m => document.getElementById(`mode-${m}`).className = m===mode ? 'px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800' : 'px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100');
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a) renderSeatGrid(a);
+        }
+        function updateGridDimensions() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
+            a.rowMin = parseInt(document.getElementById('modal-row-min').value) || a.rowMin;
+            a.rowMax = parseInt(document.getElementById('modal-row-max').value) || a.rowMax;
+            a.seatMin = parseInt(document.getElementById('modal-seat-min').value) || a.seatMin;
+            a.seatMax = parseInt(document.getElementById('modal-seat-max').value) || a.seatMax;
+            renderSeatGrid(a);
+        }
+        function expandGrid(d) {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
+            if(d==='top') a.rowMax++; if(d==='bottom') a.rowMin--; if(d==='left') a.seatMin--; if(d==='right') a.seatMax++;
+            document.getElementById('modal-row-min').value = a.rowMin;
+            document.getElementById('modal-row-max').value = a.rowMax;
+            document.getElementById('modal-seat-min').value = a.seatMin;
+            document.getElementById('modal-seat-max').value = a.seatMax;
+            renderSeatGrid(a);
+        }
+        function renderSeatGrid(area) {
+            const cont = document.getElementById('grid-container'); cont.innerHTML = '';
+            cont.style.gridTemplateColumns = `30px repeat(${(area.seatMax-area.seatMin)+1}, 24px)`;
+            const existing = AppState.seats.filter(s => s.areaId === area.id);
+            cont.appendChild(document.createElement('div'));
+            for (let s=area.seatMin; s<=area.seatMax; s++) { const d=document.createElement('div'); d.className='grid-header-col'; d.innerText=s; cont.appendChild(d); }
+            for (let r=area.rowMax; r>=area.rowMin; r--) {
+                const dr=document.createElement('div'); dr.className='grid-header-row'; dr.innerText=r; cont.appendChild(dr);
+                for (let s=area.seatMin; s<=area.seatMax; s++) {
+                    const active = existing.find(x => x.rowPos === r && x.seatPos === s);
+                    const c = document.createElement('div'); 
+                    c.className = `seat-cell ${active?'active':''} ${AppState.selectedSeatLoc?.r===r && AppState.selectedSeatLoc?.s===s ? 'selected-seat' : ''}`;
+                    if (AppState.seatEditMode === 'paint') {
+                        c.onmousedown=()=>{ isDrawingSeats=true; drawingMode = !c.classList.contains('active'); toggleSeat(area,r,s,drawingMode); c.classList.toggle('active',drawingMode); };
+                        c.onmouseenter=()=>{ if(isDrawingSeats && c.classList.contains('active')!==drawingMode){ toggleSeat(area,r,s,drawingMode); c.classList.toggle('active',drawingMode); } };
+                    } else { c.onclick = () => selectSeatInGrid(area, r, s); }
+                    cont.appendChild(c);
+                }
+            }
+            document.getElementById('seat-count-display').innerText = `${existing.length} Asientos`;
+        }
+
+        document.addEventListener('mouseup', () => { isDrawingSeats = false; });
+
+        function toggleSeat(area, r, s, add) {
+            const idx = AppState.seats.findIndex(x => x.areaId===area.id && x.rowPos===r && x.seatPos===s);
+            if (add && idx===-1) {
+                AppState.seatCounter++;
+                AppState.seats.push({ 
+                    seatId: `temp-seat-${AppState.seatCounter}`, 
+                    areaId: area.id, sectorId: area.sectorId, rowPos: r, seatPos: s, rowNum: r.toString(), seatNum: s.toString() 
+                });
+            }
+            else if (!add && idx!==-1) AppState.seats.splice(idx, 1);
+            document.getElementById('seat-count-display').innerText = `${AppState.seats.filter(x=>x.areaId===area.id).length} Asientos`;
+        }
+        function selectSeatInGrid(area, r, s) { 
+            AppState.selectedSeatLoc = {r, s}; 
+            renderSeatGrid(area); updateDetailPanel(); 
+        }
+        function updateDetailPanel() {
+            const seat = AppState.seats.find(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
+            document.getElementById('seat-details-panel').classList.remove('hidden');
+            document.getElementById('seat-edit-form').classList.toggle('hidden', !seat);
+            document.getElementById('seat-no-selection').classList.toggle('hidden', !!seat);
+            if (seat) {
+                document.getElementById('detail-seat-id').value = seat.seatId;
+                document.getElementById('detail-pos-row').value = seat.rowPos;
+                document.getElementById('detail-pos-col').value = seat.seatPos;
+                document.getElementById('detail-row-num').value = seat.rowNum;
+                document.getElementById('detail-seat-num').value = seat.seatNum;
+            }
+        }
+        function deleteSelectedSeat() {
+            const idx = AppState.seats.findIndex(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
+            if (idx !== -1) { AppState.seats.splice(idx, 1); AppState.selectedSeatLoc = null; renderSeatGrid(AppState.areas.find(a=>a.id===AppState.selectedAreaIds[0])); updateDetailPanel(); }
+        }
+        
+        function populateSectorForm() { 
+            const s = AppState.sectors.find(s => s.id === AppState.selectedSectorId); 
+            if(s) { 
+                document.getElementById('prop-sec-id').value = s.id; 
+                document.getElementById('prop-sec-title').value = s.title; 
+            } 
+        }
+        
+        function populateAreaForm() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); 
+            if (!a) return;
+            document.getElementById('prop-area-id').value = a.id; 
+            document.getElementById('prop-title').value = a.title; 
+            document.getElementById('prop-code').value = a.code;
+            const sel = document.getElementById('prop-sector-select'); 
+            sel.innerHTML = '';
+            AppState.sectors.forEach(s => { 
+                const opt = document.createElement('option'); 
+                opt.value = s.id; 
+                opt.innerText = s.title; 
+                if (s.id === a.sectorId) opt.selected = true; 
+                sel.appendChild(opt); 
+            });
+        }
+        
+        function updateSelectedAreaFromForm() { 
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); 
+            if(a) { 
+                a.id = document.getElementById('prop-area-id').value; 
+                a.title = document.getElementById('prop-title').value; 
+                a.code = document.getElementById('prop-code').value; 
+                renderTreeList(); 
+                renderMap(); 
+            } 
+        }
+        
+        function updateSelectedAreaSector() { 
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); 
+            if(a) { 
+                a.sectorId = document.getElementById('prop-sector-select').value; 
+                renderTreeList(); 
+                renderMap(); 
+            } 
+        }
+        
+        function updateSelectedSectorFromForm() { 
+            const s = AppState.sectors.find(x => x.id === AppState.selectedSectorId); 
+            if(s) { 
+                s.id = document.getElementById('prop-sec-id').value; 
+                s.title = document.getElementById('prop-sec-title').value; 
+                renderTreeList(); 
+            } 
+        }
+        
+        function updateSelectedSeatData() {
+            const seat = AppState.seats.find(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
+            if (seat) { seat.seatId = document.getElementById('detail-seat-id').value; seat.rowNum = document.getElementById('detail-row-num').value; seat.seatNum = document.getElementById('detail-seat-num').value; }
+        }
+        
+        function fillAllSeats() { const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a) { for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,true); renderSeatGrid(a); } }
+        function clearAllSeats() { const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a && confirm("¿Vaciar?")) { for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,false); renderSeatGrid(a); } }
+
+        function deleteSelectedArea() {
+            if(confirm("¿Eliminar área seleccionada?")) {
+                AppState.areas = AppState.areas.filter(a => !AppState.selectedAreaIds.includes(a.id));
+                AppState.selectedAreaIds = [];
+                renderMap(); 
+                updateUI();
+            }
+        }
+
+        function deleteSelectedSector() {
+            if(confirm("¿Eliminar sector y todas sus áreas asociadas?")) {
+                AppState.areas = AppState.areas.filter(a => a.sectorId !== AppState.selectedSectorId);
+                AppState.sectors = AppState.sectors.filter(s => s.id !== AppState.selectedSectorId);
+                AppState.selectedSectorId = null;
+                renderMap(); 
+                updateUI();
+            }
+        }
+
+        // --- Alineación ---
+        function alignSelection(type) {
+            const bounds = getSelectionBounds();
+            if (!bounds) return;
+            AppState.selectedAreaIds.forEach(id => {
+                const area = AppState.areas.find(a => a.id === id);
+                if (!area) return;
+                const aBounds = getBounds(area.points);
+                let dx = 0, dy = 0;
+                if (type === 'top') dy = bounds.minY - aBounds.minY;
+                if (type === 'bottom') dy = bounds.maxY - aBounds.maxY;
+                if (type === 'left') dx = bounds.minX - aBounds.minX;
+                if (type === 'right') dx = bounds.maxX - aBounds.maxX;
+                area.points = area.points.map(p => ({x: p.x + dx, y: p.y + dy}));
+            });
+            renderMap();
+        }
+
+        function distributeSelection(axis) {
+            if (AppState.selectedAreaIds.length < 3) return;
+            const areas = AppState.selectedAreaIds.map(id => AppState.areas.find(a => a.id === id)).filter(Boolean);
+            const bounds = getSelectionBounds();
+            if (axis === 'horizontal') {
+                areas.sort((a,b) => getCentroid(a.points).x - getCentroid(b.points).x);
+                const totalW = areas.reduce((acc, a) => acc + getBounds(a.points).width, 0);
+                const gap = (bounds.width - totalW) / (areas.length - 1);
+                let curX = bounds.minX;
+                areas.forEach((area, i) => {
+                    const b = getBounds(area.points);
+                    const dx = curX - b.minX;
+                    area.points = area.points.map(p => ({x: p.x + dx, y: p.y}));
+                    curX += b.width + gap;
+                });
+            } else {
+                areas.sort((a,b) => getCentroid(a.points).y - getCentroid(b.points).y);
+                const totalH = areas.reduce((acc, a) => acc + getBounds(a.points).height, 0);
+                const gap = (bounds.height - totalH) / (areas.length - 1);
+                let curY = bounds.minY;
+                areas.forEach((area, i) => {
+                    const b = getBounds(area.points);
+                    const dy = curY - b.minY;
+                    area.points = area.points.map(p => ({x: p.x, y: p.y + dy}));
+                    curY += b.height + gap;
+                });
+            }
+            renderMap();
+        }
+
+        updateUI(); renderMap();
+    </script>
+</body>
+</html>

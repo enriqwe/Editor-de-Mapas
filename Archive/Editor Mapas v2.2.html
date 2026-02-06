@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor de Asientos de Estadio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { overflow: hidden; }
+        
+        #main-viewport {
+            cursor: grab;
+            background-color: #e5e7eb; 
+            overflow: hidden; 
+        }
+        #main-viewport:active { cursor: grabbing; }
+
+        #map-container {
+            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+            background-size: 20px 20px;
+            transform-origin: 0 0; 
+            position: absolute; top: 0; left: 0;
+            width: 10000px; height: 10000px;
+        }
+
+        #map-svg {
+            position: absolute; top: 0; left: 0; overflow: visible;
+        }
+
+        /* ÁREAS */
+        .area-polygon {
+            stroke-width: 1px; cursor: move;
+            transition: stroke-width 0.1s, opacity 0.2s;
+            vector-effect: non-scaling-stroke;
+        }
+        .area-polygon:hover { opacity: 0.85; }
+        .area-polygon.selected {
+            stroke: #2563eb !important; stroke-width: 4px !important;
+            filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3)); stroke-dasharray: 0;
+        }
+        .area-polygon.multi-selected {
+            stroke: #2563eb !important; stroke-width: 3px !important; stroke-dasharray: 4,4;
+        }
+        .area-label {
+            font-family: sans-serif; font-weight: bold; font-size: 14px; fill: #1f2937;
+            pointer-events: none; text-shadow: 0px 1px 2px rgba(255,255,255,0.8);
+        }
+        .front-edge { stroke: #ef4444; stroke-width: 4; pointer-events: none; }
+        .front-arrow { fill: #ef4444; pointer-events: none; } 
+
+        /* ASIENTOS EN MINIATURA */
+        .seat-mini { fill: #10b981; stroke: #059669; stroke-width: 0.5; }
+
+        /* FONDO & UI */
+        .bg-image-wrapper { cursor: default; }
+        .bg-image-wrapper.editable { cursor: move; }
+        .bg-image-frame { fill: none; stroke: transparent; stroke-width: 2; }
+        .bg-image-wrapper.selected .bg-image-frame { stroke: #8b5cf6; stroke-dasharray: 5,5; }
+        .bg-handle { fill: white; stroke: #8b5cf6; stroke-width: 2; cursor: nwse-resize; display: none; }
+        .bg-image-wrapper.selected .bg-handle { display: block; }
+
+        /* Controles (Handles) */
+        .corner-handle { fill: white; stroke: #2563eb; stroke-width: 2; cursor: crosshair; }
+        .edge-handle { fill: #2563eb; stroke: white; stroke-width: 1; }
+        
+        /* Rotación Single */
+        .rotate-handle-line { stroke: #2563eb; stroke-width: 1; stroke-dasharray: 4; }
+        .rotate-handle-circle { fill: white; stroke: #2563eb; stroke-width: 2; cursor: grab; }
+
+        /* Rotación Grupal */
+        .group-bounds-rect {
+            fill: none;
+            stroke: #2563eb;
+            stroke-width: 1;
+            stroke-dasharray: 6, 4;
+            pointer-events: none;
+        }
+
+        /* MARQUEE DE SELECCIÓN */
+        #selection-marquee {
+            fill: rgba(59, 130, 246, 0.2);
+            stroke: #2563eb;
+            stroke-width: 1;
+            stroke-dasharray: 4, 4;
+            pointer-events: none;
+            display: none;
+        }
+        #selection-marquee.active { display: block; }
+
+        /* GRID EDITOR */
+        .seat-grid { display: grid; gap: 2px; padding: 20px; background: #f3f4f6; overflow: auto; max-height: 70vh; margin: auto; align-content: start; }
+        .seat-cell { width: 24px; height: 24px; border-radius: 4px; background-color: #e5e7eb; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #6b7280; user-select: none; }
+        .seat-cell.active { background-color: #10b981; color: white; border: 1px solid #059669; }
+        .seat-cell:hover { opacity: 0.8; }
+        .seat-cell.selected-seat { border: 2px solid #2563eb !important; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3); z-index: 10; transform: scale(1.1); }
+        .grid-header-col { display: flex; align-items: end; justify-content: center; font-size: 10px; font-weight: bold; color: #6b7280; padding-bottom: 2px; user-select: none; }
+        .grid-header-row { display: flex; align-items: center; justify-content: end; font-size: 10px; font-weight: bold; color: #6b7280; padding-right: 4px; user-select: none; }
+        
+        /* TREE VIEW */
+        .sector-header { background-color: #f3f4f6; font-weight: bold; padding: 6px 8px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; border-radius: 4px; margin-top: 4px; user-select: none; }
+        .sector-header:hover { background-color: #e5e7eb; }
+        .sector-header.active { background-color: #e0e7ff; color: #4338ca; border: 1px solid #c7d2fe; }
+        .area-item { padding: 4px 8px 4px 24px; font-size: 12px; cursor: pointer; border-left: 2px solid transparent; display: flex; justify-content: space-between; }
+        .area-item:hover { background-color: #f9fafb; }
+        .area-item.active { background-color: #eff6ff; border-left-color: #3b82f6; font-weight: 500; }
+        
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 h-screen flex flex-col font-sans">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 h-14 flex items-center justify-between px-4 shadow-sm z-30">
+        <div class="flex items-center gap-2">
+            <i data-lucide="armchair" class="text-blue-600"></i>
+            <h1 class="font-bold text-lg hidden md:block">Stadium Map Editor</h1>
+        </div>
+        
+        <div class="flex gap-1 items-center bg-gray-50 p-1 rounded border border-gray-200" id="alignment-tools">
+            <div class="text-[10px] text-gray-400 font-bold uppercase mr-1 px-1">Alinear:</div>
+            <button onclick="alignSelection('top')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Arriba"><i data-lucide="align-vertical-justify-start" class="w-4 h-4"></i></button>
+            <button onclick="alignSelection('bottom')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Abajo"><i data-lucide="align-vertical-justify-end" class="w-4 h-4"></i></button>
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button onclick="alignSelection('left')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Izquierda"><i data-lucide="align-horizontal-justify-start" class="w-4 h-4"></i></button>
+            <button onclick="alignSelection('right')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Alinear Derecha"><i data-lucide="align-horizontal-justify-end" class="w-4 h-4"></i></button>
+            
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button onclick="distributeSelection('horizontal')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Distribuir Horizontalmente" id="btn-dist-h">
+                <i data-lucide="stretch-horizontal" class="w-4 h-4"></i>
+            </button>
+            <button onclick="distributeSelection('vertical')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Distribuir Verticalmente" id="btn-dist-v">
+                <i data-lucide="stretch-vertical" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <div class="flex gap-3 items-center">
+            <button id="toggle-seats-btn" onclick="toggleShowSeats()" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold border rounded transition-colors bg-white border-gray-300 text-gray-600 hover:bg-gray-50">
+                <i data-lucide="layout-grid" class="w-4 h-4"></i>
+                <span>Ver Asientos</span>
+            </button>
+
+            <div class="flex items-center gap-1 bg-gray-100 rounded px-1 border border-gray-200">
+                <button onclick="document.getElementById('bgInput').click()" class="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900 rounded">
+                    <i data-lucide="image"></i> <span class="hidden lg:inline">Imagen</span>
+                </button>
+                <div class="w-px h-4 bg-gray-300"></div>
+                <button id="bg-lock-btn" onclick="toggleBgLock()" class="p-1.5 text-gray-500 hover:text-gray-800" title="Bloquear/Desbloquear fondo">
+                    <i id="bg-lock-icon" data-lucide="lock" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <input type="file" id="bgInput" accept="image/*" class="hidden">
+
+            <button onclick="document.getElementById('csvInput').click()" class="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded">
+                <i data-lucide="upload"></i> Importar
+            </button>
+            <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" class="hidden">
+
+            <button onclick="exportData()" class="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded">
+                <i data-lucide="download"></i> Exportar
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="flex flex-1 overflow-hidden relative">
+        
+        <!-- Sidebar -->
+        <aside class="w-80 bg-white border-r border-gray-200 flex flex-col z-20 shadow-lg">
+            <div class="p-4 border-b border-gray-100 bg-gray-50 h-1/2 overflow-y-auto">
+                <h2 class="font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                    <i data-lucide="settings-2" class="w-4 h-4"></i> Propiedades
+                </h2>
+                <div id="multi-selection-info" class="hidden text-sm p-4 bg-blue-50 text-blue-800 rounded border border-blue-200 text-center">
+                    <span class="font-bold block text-lg mb-1" id="multi-count">0</span> Áreas seleccionadas
+                </div>
+                <div id="bg-edit-info" class="hidden text-sm p-4 bg-purple-50 text-purple-800 rounded border border-purple-200">
+                    <div class="font-bold flex items-center gap-2 mb-1"><i data-lucide="image" class="w-4 h-4"></i> Fondo</div>
+                    <button onclick="toggleBgLock()" class="w-full bg-white border border-purple-200 text-purple-700 py-1 px-2 rounded hover:bg-purple-100 text-xs mt-2">Terminar Edición</button>
+                </div>
+                <div id="no-selection" class="text-sm text-gray-500 italic p-4 text-center border-2 border-dashed rounded bg-gray-50">Selecciona un <b>Sector</b> o un <b>Área</b> del árbol inferior para ver sus propiedades.</div>
+                <form id="sector-form" class="hidden space-y-3 text-sm border-l-4 border-indigo-500 pl-3">
+                    <div class="text-xs font-bold text-indigo-600 uppercase mb-2">Editando Sector</div>
+                    <div><label class="block text-xs font-medium text-gray-500">Sector ID</label><input type="text" id="prop-sec-id" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1 bg-gray-50 font-mono" oninput="updateSelectedSectorFromForm()"></div>
+                    <div><label class="block text-xs font-medium text-gray-500">Nombre Sector</label><input type="text" id="prop-sec-title" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateSelectedSectorFromForm()"></div>
+                    <div class="pt-2"><button type="button" onclick="deleteSelectedSector()" class="text-red-600 hover:text-red-800 text-xs flex items-center gap-1"><i data-lucide="trash-2" class="w-3 h-3"></i> Eliminar Sector</button></div>
+                </form>
+                <form id="area-form" class="hidden space-y-3 text-sm border-l-4 border-blue-500 pl-3">
+                    <div class="text-xs font-bold text-blue-600 uppercase mb-2">Editando Área</div>
+                    <div><label class="block text-xs font-medium text-gray-500">Area ID</label><input type="text" id="prop-area-id" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1 font-mono text-xs" oninput="updateSelectedAreaFromForm()"></div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div><label class="block text-xs font-medium text-gray-500">Título</label><input type="text" id="prop-title" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateSelectedAreaFromForm()"></div>
+                        <div><label class="block text-xs font-medium text-gray-500">Código</label><input type="text" id="prop-code" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateSelectedAreaFromForm()"></div>
+                    </div>
+                    <div><label class="block text-xs font-medium text-gray-500">Sector</label><select id="prop-sector-select" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" onchange="updateSelectedAreaSector()"></select></div>
+                    <button type="button" onclick="openSeatEditor()" class="w-full mt-2 bg-blue-600 text-white py-2 rounded font-medium hover:bg-blue-700 shadow-sm flex justify-center items-center gap-2"><i data-lucide="grid-3x3" class="w-4 h-4"></i> Editar Asientos</button>
+                    <div class="pt-2 border-t mt-2 flex justify-between items-center"><button type="button" onclick="deleteSelectedArea()" class="text-red-600 hover:text-red-800 text-xs flex items-center gap-1"><i data-lucide="trash-2" class="w-3 h-3"></i> Eliminar</button></div>
+                </form>
+            </div>
+            <div class="flex-1 overflow-y-auto p-2 bg-gray-50 border-t border-gray-200">
+                <div class="flex justify-between items-center mb-2 px-2 sticky top-0 bg-gray-50 py-1 z-10">
+                    <h3 class="font-bold text-xs text-gray-500 uppercase">Estructura</h3>
+                    <div class="flex gap-1">
+                        <button onclick="createNewSector()" class="text-indigo-600 border border-indigo-200 bg-white px-2 py-1 rounded shadow-sm text-xs font-bold">+ Sec</button>
+                        <button onclick="createNewArea()" class="text-blue-600 border border-blue-200 bg-white px-2 py-1 rounded shadow-sm text-xs font-bold">+ Área</button>
+                    </div>
+                </div>
+                <div id="tree-list" class="space-y-1 pb-4"></div>
+            </div>
+        </aside>
+
+        <!-- Canvas -->
+        <div class="flex-1 relative overflow-hidden flex flex-col">
+            <div class="absolute top-4 right-4 z-50 flex flex-col gap-1 bg-white shadow rounded">
+                <button onclick="adjustZoom(0.1)" class="p-2 hover:bg-gray-100">+</button>
+                <button onclick="resetZoom()" class="p-2 text-xs font-bold hover:bg-gray-100">100%</button>
+                <button onclick="adjustZoom(-0.1)" class="p-2 hover:bg-gray-100">-</button>
+            </div>
+            <main id="main-viewport" class="flex-1 relative bg-gray-200 w-full h-full">
+                <div id="map-container" class="relative origin-top-left">
+                    <svg id="map-svg" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                        <defs id="map-defs">
+                            <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+                                <polygon points="0 0, 6 2, 0 4" fill="#ef4444" />
+                            </marker>
+                        </defs>
+                        <g id="bg-layer"></g>
+                        <g id="areas-layer"></g>
+                        <g id="controls-layer"></g>
+                        <g id="ui-layer">
+                            <rect id="selection-marquee"></rect>
+                        </g>
+                    </svg>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modal Asientos -->
+    <div id="seat-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center backdrop-blur-sm">
+        <div class="bg-white rounded-lg shadow-2xl w-11/12 max-w-7xl h-[95vh] flex flex-col">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
+                <div class="flex items-center gap-4">
+                    <h2 class="text-xl font-bold text-gray-800" id="modal-title">Editor</h2>
+                    <div class="flex items-center bg-gray-200 p-1 rounded-lg">
+                        <button id="mode-paint" onclick="setEditMode('paint')" class="px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800">Pintar</button>
+                        <button id="mode-select" onclick="setEditMode('select')" class="px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100">Seleccionar</button>
+                    </div>
+                    <div class="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm ml-4 text-sm">
+                        <span>FIL:</span><input type="number" id="modal-row-min" class="w-12 text-center border rounded" onchange="updateGridDimensions()"><span>-</span><input type="number" id="modal-row-max" class="w-12 text-center border rounded" onchange="updateGridDimensions()">
+                        <div class="w-px h-4 bg-gray-300 mx-2"></div>
+                        <span>COL:</span><input type="number" id="modal-seat-min" class="w-12 text-center border rounded" onchange="updateGridDimensions()"><span>-</span><input type="number" id="modal-seat-max" class="w-12 text-center border rounded" onchange="updateGridDimensions()">
+                    </div>
+                </div>
+                <button onclick="closeSeatEditor()" class="text-gray-500 hover:text-gray-800"><i data-lucide="x"></i></button>
+            </div>
+            <div class="flex-1 overflow-hidden flex bg-gray-100">
+                <div class="flex-1 flex flex-col p-4 border-r border-gray-200 min-w-0">
+                    <div class="flex justify-between mb-2 text-sm text-gray-600 px-2 items-center">
+                        <span id="seat-count-display">0 Asientos</span>
+                        <div class="flex items-center gap-1 bg-white px-2 py-1 rounded shadow-sm border border-gray-200">
+                            <button onclick="expandGrid('top')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-up-from-line" class="w-4 h-4"></i></button>
+                            <button onclick="expandGrid('bottom')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-down-to-line" class="w-4 h-4"></i></button>
+                            <button onclick="expandGrid('left')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-left-from-line" class="w-4 h-4"></i></button>
+                            <button onclick="expandGrid('right')" class="p-1 hover:bg-blue-50 text-blue-600 rounded"><i data-lucide="arrow-right-to-line" class="w-4 h-4"></i></button>
+                        </div>
+                    </div>
+                    <div class="flex-1 border rounded bg-white shadow-inner relative overflow-auto flex justify-center p-8"><div id="grid-container" class="seat-grid select-none"></div></div>
+                </div>
+                <div id="seat-details-panel" class="w-80 bg-white p-4 overflow-y-auto hidden">
+                    <h3 class="font-bold text-gray-700 mb-4 pb-2 border-b">Detalles Asiento</h3>
+                    <div id="seat-edit-form" class="space-y-4">
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase">Seat ID</label><input type="text" id="detail-seat-id" class="w-full mt-1 p-2 border rounded font-mono text-xs bg-gray-50" oninput="updateSelectedSeatData()"></div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label class="block text-xs font-bold text-gray-500 uppercase">Fila (G)</label><input type="text" id="detail-pos-row" class="w-full mt-1 p-2 border rounded bg-gray-100" disabled></div>
+                            <div><label class="block text-xs font-bold text-gray-500 uppercase">Col (G)</label><input type="text" id="detail-pos-col" class="w-full mt-1 p-2 border rounded bg-gray-100" disabled></div>
+                        </div>
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase">Num Fila</label><input type="text" id="detail-row-num" class="w-full mt-1 p-2 border rounded" oninput="updateSelectedSeatData()"></div>
+                        <div><label class="block text-xs font-bold text-gray-500 uppercase">Num Asiento</label><input type="text" id="detail-seat-num" class="w-full mt-1 p-2 border rounded" oninput="updateSelectedSeatData()"></div>
+                        <div class="pt-4 border-t"><button onclick="deleteSelectedSeat()" class="w-full py-2 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 font-medium">Eliminar</button></div>
+                    </div>
+                    <div id="seat-no-selection" class="text-center text-gray-400 py-10"><i data-lucide="mouse-pointer-2" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p>Selecciona un asiento.</p></div>
+                </div>
+            </div>
+            <div class="p-4 border-t flex justify-end gap-2 bg-gray-50 rounded-b-lg">
+                <button onclick="fillAllSeats()" class="px-4 py-2 text-sm bg-white border border-gray-300 rounded text-gray-700">Llenar</button>
+                <button onclick="clearAllSeats()" class="px-4 py-2 text-sm bg-white border border-red-300 rounded text-red-600">Vaciar</button>
+                <button onclick="closeSeatEditor()" class="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 font-medium">Hecho</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Estado ---
+        const AppState = {
+            seats: [], sectors: [{ id: 'default-sec', title: 'Sector General' }], areas: [], 
+            background: { url: null, x: 0, y: 0, w: 0, h: 0, locked: true, selected: false },
+            zoom: 1, selectedAreaIds: [], selectedSectorId: null, 
+            isDraggingMap: false, mapOffset: { x: 0, y: 0 }, dragStart: { x: 0, y: 0 },
+            panX: 0, panY: 0,
+            interactionMode: null, activeAreaId: null, activeCornerIndex: -1, activeEdgeIndex: -1, initialClickPoint: { x: 0, y: 0 },
+            initialPointsMap: {}, initialCenter: { x: 0, y: 0 }, initialAngle: 0, initialBgRect: { x:0, y:0, w:0, h:0 },
+            
+            boxSelectStart: { x: 0, y: 0 },
+            boxSelectInitialSelection: [],
+            
+            seatEditMode: 'paint', selectedSeatLoc: null,
+            showSeatsInMap: false
+        };
+
+        const GRID_STEP = 10; 
+
+        lucide.createIcons();
+
+        // --- 2. Utils ---
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+        function getCentroid(points) {
+            let x = 0, y = 0; points.forEach(p => { x += p.x; y += p.y; });
+            return { x: x / points.length, y: y / points.length };
+        }
+        function getBounds(points) {
+            const xs = points.map(p => p.x), ys = points.map(p => p.y);
+            return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+        }
+        
+        function getSelectionBounds() {
+            if (AppState.selectedAreaIds.length === 0) return null;
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            AppState.selectedAreaIds.forEach(id => {
+                const area = AppState.areas.find(a => a.id === id);
+                if (area) {
+                    area.points.forEach(p => {
+                        if (p.x < minX) minX = p.x;
+                        if (p.x > maxX) maxX = p.x;
+                        if (p.y < minY) minY = p.y;
+                        if (p.y > maxY) maxY = p.y;
+                    });
+                }
+            });
+            return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY, centerX: (minX+maxX)/2, centerY: (minY+maxY)/2 };
+        }
+
+        function getSectorColor(index) {
+            if (index === -1) return { fill: "#e5e7eb", stroke: "#9ca3af" };
+            const hue = (200 + index * 137.508) % 360;
+            return { fill: `hsl(${hue}, 60%, 88%)`, stroke: `hsl(${hue}, 50%, 45%)` };
+        }
+
+        // --- 3. CSV Import ---
+        function parseCSV(text) {
+            text = text.replace(/^\uFEFF/, '');
+            const lines = text.split(/\r\n|\n/).filter(l => l.trim() !== '');
+            if (lines.length === 0) return [];
+            const firstLine = lines[0];
+            const semi = (firstLine.match(/;/g)||[]).length;
+            const comma = (firstLine.match(/,/g)||[]).length;
+            const delimiter = semi > comma ? ';' : ',';
+            const parseLine = (line) => {
+                const row = []; let current = ''; let insideQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"') { if (insideQuotes && line[i+1] === '"') { current += '"'; i++; } else { insideQuotes = !insideQuotes; } }
+                    else if (char === delimiter && !insideQuotes) { row.push(current); current = ''; } else { current += char; }
+                }
+                row.push(current); return row;
+            };
+            const headers = parseLine(firstLine).map(h => h.trim().toUpperCase());
+            const data = [];
+            for (let i = 1; i < lines.length; i++) {
+                const values = parseLine(lines[i]);
+                if (values.length < 2) continue;
+                const entry = {};
+                headers.forEach((h, idx) => { entry[h] = values[idx] ? values[idx].trim() : ''; });
+                data.push(entry);
+            }
+            return data;
+        }
+
+        document.getElementById('csvInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => processImportedData(parseCSV(evt.target.result));
+            reader.readAsText(file);
+        });
+
+        function processImportedData(data) {
+            AppState.seats = []; AppState.sectors = []; AppState.areas = [];
+            AppState.selectedAreaIds = []; AppState.selectedSectorId = null;
+            AppState.panX = 0; AppState.panY = 0; AppState.zoom = 1; 
+
+            data.sort((a, b) => {
+                const sA = a['SECTOR ID'] || ''; const sB = b['SECTOR ID'] || '';
+                if (sA < sB) return -1; if (sA > sB) return 1;
+                const aA = a['AREA ID'] || ''; const aB = b['AREA ID'] || '';
+                if (aA < aB) return -1; if (aA > aB) return 1;
+                return 0;
+            });
+
+            const sectorsMap = new Map();
+            const areasMap = new Map();
+
+            data.forEach(row => {
+                const secId = row['SECTOR ID'] || 'UNKNOWN';
+                const secTitle = row['SECTOR TITLE'] || 'Sector Sin Nombre';
+                const areaId = row['AREA ID'] || 'UNKNOWN';
+                const areaTitle = row['AREA TITLE'] || 'Área Sin Nombre';
+                const areaCode = row['AREA CODE'] || 'NA';
+                const seatId = row['SEAT ID'] || generateUUID();
+                const rowPos = parseInt(row['ROW POSITION']) || 1;
+                const seatPos = parseInt(row['SEAT POSITION']) || 1;
+                const savedShape = row['AREA SHAPE'];
+
+                if (!sectorsMap.has(secId)) {
+                    const newSector = { id: secId, title: secTitle };
+                    AppState.sectors.push(newSector);
+                    sectorsMap.set(secId, { obj: newSector, areaIds: [] });
+                }
+                const currentSectorData = sectorsMap.get(secId);
+
+                if (!areasMap.has(areaId)) {
+                    currentSectorData.areaIds.push(areaId);
+                    let restoredPoints = null;
+                    if (savedShape && savedShape.startsWith('[')) { try { restoredPoints = JSON.parse(savedShape); } catch(e) {} }
+                    areasMap.set(areaId, {
+                        id: areaId, title: areaTitle, code: areaCode, sectorId: secId,
+                        rowMin: rowPos, rowMax: rowPos, seatMin: seatPos, seatMax: seatPos,
+                        savedPoints: restoredPoints
+                    });
+                }
+                const currentArea = areasMap.get(areaId);
+                currentArea.rowMin = Math.min(currentArea.rowMin, rowPos);
+                currentArea.rowMax = Math.max(currentArea.rowMax, rowPos);
+                currentArea.seatMin = Math.min(currentArea.seatMin, seatPos);
+                currentArea.seatMax = Math.max(currentArea.seatMax, seatPos);
+
+                AppState.seats.push({
+                    seatId: seatId, areaId: areaId, areaTitle: areaTitle, areaCode: areaCode,
+                    sectorId: secId, sectorTitle: secTitle,
+                    rowPos: rowPos, seatPos: seatPos,
+                    rowNum: row['ROW NUMBER'] || '', seatNum: row['SEAT NUMBER'] || ''
+                });
+            });
+
+            const startX = 100; let currentY = 100;
+            const GAP_X = 5; const GAP_Y = 80;
+            const AREA_W = 160; const AREA_H = 100;
+
+            AppState.sectors.forEach(sector => {
+                let currentX = startX;
+                const sectorData = sectorsMap.get(sector.id);
+                sectorData.areaIds.forEach(areaId => {
+                    const aData = areasMap.get(areaId);
+                    let finalPoints;
+                    if (aData.savedPoints) {
+                        finalPoints = aData.savedPoints;
+                    } else {
+                        finalPoints = [{x: currentX, y: currentY}, {x: currentX + AREA_W, y: currentY}, {x: currentX + AREA_W, y: currentY + AREA_H}, {x: currentX, y: currentY + AREA_H}];
+                        currentX += AREA_W + GAP_X; 
+                    }
+                    const newArea = {
+                        id: aData.id, title: aData.title, code: aData.code, sectorId: aData.sectorId,
+                        rowMin: aData.rowMin, rowMax: aData.rowMax, seatMin: aData.seatMin, seatMax: aData.seatMax,
+                        points: finalPoints
+                    };
+                    AppState.areas.push(newArea);
+                });
+                if (sectorData.areaIds.length > 0) currentY += AREA_H + GAP_Y;
+            });
+
+            renderMap(); renderTreeList(); updateUI(); updateTransform();
+        }
+
+        // --- Export ---
+        function exportData() {
+            const headers = ['SECTOR ID','SECTOR TITLE','AREA ID','AREA TITLE','AREA CODE','SEAT ID','ROW POSITION','SEAT POSITION','ROW NUMBER','SEAT NUMBER', 'AREA POSITION', 'AREA SHAPE'];
+            let csvContent = headers.join(',') + "\n";
+            const escape = (val) => {
+                if (val === null || val === undefined) return '';
+                const str = String(val);
+                if (str.includes(',') || str.includes('"') || str.includes('\n')) return `"${str.replace(/"/g, '""')}"`;
+                return str;
+            };
+            AppState.seats.forEach(seat => {
+                const parentArea = AppState.areas.find(a => a.id === seat.areaId);
+                const parentSector = parentArea ? AppState.sectors.find(s => s.id === parentArea.sectorId) : null;
+                let posStr = '', shapeStr = '';
+                if (parentArea && parentArea.points.length > 0) {
+                    const p0 = parentArea.points[0]; posStr = `${Math.round(p0.x)},${Math.round(p0.y)}`; shapeStr = JSON.stringify(parentArea.points);
+                }
+                const row = [
+                    escape(parentSector ? parentSector.id : (seat.sectorId || '')), escape(parentSector ? parentSector.title : (seat.sectorTitle || '')),
+                    escape(seat.areaId), escape(parentArea ? parentArea.title : seat.areaTitle), escape(parentArea ? parentArea.code : seat.areaCode),
+                    escape(seat.seatId), seat.rowPos, seat.seatPos, escape(seat.rowNum), escape(seat.seatNum), escape(posStr), escape(shapeStr)
+                ];
+                csvContent += row.join(',') + "\n";
+            });
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url); link.setAttribute("download", "estadio_export.csv");
+            document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        }
+
+        // --- 4. Render Map ---
+        const mapContainer = document.getElementById('map-container');
+        const bgLayer = document.getElementById('bg-layer');
+        const areasLayer = document.getElementById('areas-layer');
+        const controlsLayer = document.getElementById('controls-layer');
+        const viewport = document.getElementById('main-viewport');
+        const mapDefs = document.getElementById('map-defs');
+
+        function updateTransform() {
+            mapContainer.style.transform = `translate(${AppState.panX}px, ${AppState.panY}px) scale(${AppState.zoom})`;
+        }
+
+        document.getElementById('bgInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                const tempImg = new Image();
+                tempImg.src = url;
+                tempImg.onload = () => {
+                    AppState.background.url = url; AppState.background.w = tempImg.naturalWidth; AppState.background.h = tempImg.naturalHeight;
+                    AppState.background.locked = false; AppState.background.selected = true;
+                    updateBgUI(); renderMap();
+                };
+            }
+        });
+
+        function toggleBgLock() {
+            AppState.background.locked = !AppState.background.locked;
+            if (AppState.background.locked) AppState.background.selected = false;
+            else { AppState.background.selected = true; AppState.selectedAreaIds = []; AppState.selectedSectorId = null; }
+            updateBgUI(); renderMap(); updateUI();
+        }
+
+        function updateBgUI() {
+            const icon = document.getElementById('bg-lock-icon');
+            const btn = document.getElementById('bg-lock-btn');
+            if (AppState.background.locked) { icon.setAttribute('data-lucide', 'lock'); btn.className = "p-1.5 text-gray-500 hover:text-gray-800"; }
+            else { icon.setAttribute('data-lucide', 'lock-open'); btn.className = "p-1.5 text-purple-600 bg-purple-100 rounded"; }
+            lucide.createIcons();
+        }
+
+        function toggleShowSeats() {
+            AppState.showSeatsInMap = !AppState.showSeatsInMap;
+            const btn = document.getElementById('toggle-seats-btn');
+            if (AppState.showSeatsInMap) {
+                btn.className = "flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold border rounded transition-colors bg-blue-600 border-blue-600 text-white shadow-md";
+            } else {
+                btn.className = "flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold border rounded transition-colors bg-white border-gray-300 text-gray-600 hover:bg-gray-50";
+            }
+            renderMap();
+        }
+
+        function renderMap() {
+            bgLayer.innerHTML = '';
+            const oldClips = mapDefs.querySelectorAll('.area-clip');
+            oldClips.forEach(c => c.remove());
+
+            if (AppState.background.url) {
+                const gBg = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                gBg.setAttribute("class", `bg-image-wrapper ${!AppState.background.locked?'editable':''} ${AppState.background.selected?'selected':''}`);
+                const img = document.createElementNS("http://www.w3.org/2000/svg", "image");
+                img.setAttribute("href", AppState.background.url);
+                img.setAttribute("x", AppState.background.x); img.setAttribute("y", AppState.background.y);
+                img.setAttribute("width", AppState.background.w); img.setAttribute("height", AppState.background.h);
+                img.addEventListener('mousedown', (e) => { if (!AppState.background.locked) startMoveBackground(e); });
+                gBg.appendChild(img);
+                if (AppState.background.selected && !AppState.background.locked) {
+                    const coords = [{x: AppState.background.x, y: AppState.background.y}, {x: AppState.background.x + AppState.background.w, y: AppState.background.y}, {x: AppState.background.x + AppState.background.w, y: AppState.background.y + AppState.background.h}, {x: AppState.background.x, y: AppState.background.y + AppState.background.h}];
+                    coords.forEach((c, i) => {
+                        const h = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        h.setAttribute("class", `bg-handle bg-handle-${i}`); h.setAttribute("x", c.x-6); h.setAttribute("y", c.y-6); h.setAttribute("width", 12); h.setAttribute("height", 12);
+                        h.addEventListener('mousedown', (e) => startResizeBackground(e, i));
+                        gBg.appendChild(h);
+                    });
+                }
+                bgLayer.appendChild(gBg);
+            }
+
+            areasLayer.innerHTML = '';
+            AppState.areas.forEach(area => {
+                const isSelected = AppState.selectedAreaIds.includes(area.id);
+                // Marcamos la última área seleccionada como la "activa" para mostrar sus tiradores
+                const isActive = AppState.selectedAreaIds[AppState.selectedAreaIds.length - 1] === area.id;
+                const sectorIndex = AppState.sectors.findIndex(s => s.id === area.sectorId);
+                const colors = getSectorColor(sectorIndex);
+
+                if (AppState.showSeatsInMap) {
+                    const clipId = `clip-${area.id}`;
+                    const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
+                    clipPath.setAttribute("id", clipId);
+                    clipPath.setAttribute("class", "area-clip");
+                    const clipPoly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                    clipPoly.setAttribute("points", area.points.map(p => `${p.x},${p.y}`).join(" "));
+                    clipPath.appendChild(clipPoly);
+                    mapDefs.appendChild(clipPath);
+                }
+
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.setAttribute("class", isActive ? "single-selected-group" : "");
+                
+                const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                poly.setAttribute("points", area.points.map(p => `${p.x},${p.y}`).join(" "));
+                poly.setAttribute("style", `fill: ${colors.fill}; stroke: ${colors.stroke};`);
+                
+                let cls = "area-polygon";
+                if (isSelected) cls += AppState.selectedAreaIds.length > 1 ? " multi-selected" : " selected";
+                poly.setAttribute("class", cls);
+                
+                poly.addEventListener('mousedown', (e) => startMoveArea(e, area));
+                poly.addEventListener('dblclick', (e) => { e.stopPropagation(); openSeatEditor(); });
+                g.appendChild(poly);
+
+                if (AppState.showSeatsInMap) {
+                    const gSeats = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                    gSeats.setAttribute("clip-path", `url(#clip-${area.id})`);
+                    gSeats.setAttribute("pointer-events", "none");
+
+                    const p0 = area.points[0], p1 = area.points[1], p3 = area.points[3];
+                    const dx1 = p1.x - p0.x, dy1 = p1.y - p0.y, len1 = Math.sqrt(dx1*dx1+dy1*dy1);
+                    const dx3 = p3.x - p0.x, dy3 = p3.y - p0.y, len3 = Math.sqrt(dx3*dx3+dy3*dy3);
+                    const ux = dx1 / len1, uy = dy1 / len1; 
+                    const vx = dx3 / len3, vy = dy3 / len3; 
+
+                    const areaSeats = AppState.seats.filter(s => s.areaId === area.id);
+                    areaSeats.forEach(seat => {
+                        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        const localX = (seat.seatPos - area.seatMin) * GRID_STEP + 2;
+                        const localY = (area.rowMax - seat.rowPos) * GRID_STEP + 2;
+                        const worldX = p0.x + (localX * ux) + (localY * vx);
+                        const worldY = p0.y + (localX * uy) + (localY * vy);
+                        rect.setAttribute("x", worldX);
+                        rect.setAttribute("y", worldY);
+                        rect.setAttribute("width", GRID_STEP - 3);
+                        rect.setAttribute("height", GRID_STEP - 3);
+                        rect.setAttribute("rx", 1);
+                        rect.setAttribute("class", "seat-mini");
+                        const angle = Math.atan2(uy, ux) * (180/Math.PI);
+                        rect.setAttribute("transform", `rotate(${angle}, ${worldX}, ${worldY})`);
+                        gSeats.appendChild(rect);
+                    });
+                    g.appendChild(gSeats);
+                }
+
+                const c = getCentroid(area.points);
+                const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                txt.setAttribute("class", "area-label");
+                txt.setAttribute("x", c.x); txt.setAttribute("y", c.y); 
+                txt.setAttribute("text-anchor", "middle"); txt.setAttribute("dominant-baseline", "middle");
+                txt.textContent = area.code;
+                g.appendChild(txt);
+
+                const p3l = area.points[2], p4l = area.points[3];
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("class", "front-edge"); line.setAttribute("x1", p4l.x); line.setAttribute("y1", p4l.y); line.setAttribute("x2", p3l.x); line.setAttribute("y2", p3l.y);
+                g.appendChild(line);
+
+                const mx = (p3l.x+p4l.x)/2, my = (p3l.y+p4l.y)/2, dx = p3l.x-p4l.x, dy = p3l.y-p4l.y, l = Math.sqrt(dx*dx+dy*dy);
+                const nx = -dy/l, ny = dx/l;
+                const arrow = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                arrow.setAttribute("class", "front-arrow");
+                arrow.setAttribute("x1", mx); arrow.setAttribute("y1", my); 
+                arrow.setAttribute("x2", mx+nx*18); arrow.setAttribute("y2", my+ny*18); 
+                arrow.setAttribute("stroke", "#ef4444"); 
+                arrow.setAttribute("stroke-width", "3"); 
+                arrow.setAttribute("marker-end", "url(#arrowhead)"); 
+                g.appendChild(arrow);
+
+                // Mostramos tiradores solo en el área activa (la última pulsada)
+                if (isActive) {
+                    area.points.forEach((p, i) => {
+                        const h = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                        h.setAttribute("class", "corner-handle"); h.setAttribute("cx", p.x); h.setAttribute("cy", p.y); h.setAttribute("r", 5);
+                        h.addEventListener('mousedown', (e) => startMoveCorner(e, area, i));
+                        g.appendChild(h);
+                    });
+
+                    area.points.forEach((p, i) => {
+                        const nextI = (i + 1) % 4;
+                        const pNext = area.points[nextI];
+                        const midX = (p.x + pNext.x) / 2;
+                        const midY = (p.y + pNext.y) / 2;
+                        const h = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                        h.setAttribute("class", "edge-handle");
+                        h.setAttribute("x", midX - 5); h.setAttribute("y", midY - 5);
+                        h.setAttribute("width", 10); h.setAttribute("height", 10);
+                        if (i === 0 || i === 2) h.style.cursor = 'ns-resize'; 
+                        else h.style.cursor = 'ew-resize'; 
+                        h.addEventListener('mousedown', (e) => startMoveEdge(e, area, i));
+                        g.appendChild(h);
+                    });
+
+                    const topMidX=(area.points[0].x+area.points[1].x)/2, topMidY=(area.points[0].y+area.points[1].y)/2;
+                    const vdx=topMidX-c.x, vdy=topMidY-c.y, vl=Math.sqrt(vdx*vdx+vdy*vdy);
+                    const rx=topMidX+(vdx/vl)*30, ry=topMidY+(vdy/vl)*30;
+                    const rl = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                    rl.setAttribute("class", "rotate-handle-line"); rl.setAttribute("x1", topMidX); rl.setAttribute("y1", topMidY); rl.setAttribute("x2", rx); rl.setAttribute("y2", ry);
+                    g.appendChild(rl);
+                    const rc = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    rc.setAttribute("class", "rotate-handle-circle"); rc.setAttribute("cx", rx); rc.setAttribute("cy", ry); rc.setAttribute("r", 7);
+                    rc.addEventListener('mousedown', (e) => startRotateArea(e, area));
+                    g.appendChild(rc);
+                }
+                areasLayer.appendChild(g);
+            });
+            
+            controlsLayer.innerHTML = '';
+            if (AppState.selectedAreaIds.length > 1) {
+                const bounds = getSelectionBounds();
+                if (bounds) {
+                    const gUI = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                    rect.setAttribute("x", bounds.minX); rect.setAttribute("y", bounds.minY);
+                    rect.setAttribute("width", bounds.width); rect.setAttribute("height", bounds.height);
+                    rect.setAttribute("class", "group-bounds-rect");
+                    gUI.appendChild(rect);
+                    controlsLayer.appendChild(gUI);
+                }
+            }
+        }
+
+        // --- 5. Interacciones Mouse ---
+        function getMousePos(evt) {
+            const rect = viewport.getBoundingClientRect();
+            return {
+                x: (evt.clientX - rect.left - AppState.panX) / AppState.zoom,
+                y: (evt.clientY - rect.top - AppState.panY) / AppState.zoom
+            };
+        }
+
+        function toggleSelection(id, add) {
+            AppState.background.selected = false;
+            AppState.selectedSectorId = null;
+            if (add) {
+                if (AppState.selectedAreaIds.includes(id)) AppState.selectedAreaIds = AppState.selectedAreaIds.filter(i => i !== id);
+                else AppState.selectedAreaIds.push(id);
+            } else {
+                AppState.selectedAreaIds = [id];
+            }
+            updateUI();
+        }
+
+        viewport.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = viewport.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            const wx = (mx - AppState.panX) / AppState.zoom;
+            const wy = (my - AppState.panY) / AppState.zoom;
+            const d = -e.deltaY * 0.001; 
+            let newZoom = AppState.zoom * (1 + d); 
+            newZoom = Math.max(0.1, Math.min(5, newZoom)); 
+            const newPanX = mx - wx * newZoom;
+            const newPanY = my - wy * newZoom;
+            AppState.zoom = newZoom;
+            AppState.panX = newPanX;
+            AppState.panY = newPanY;
+            updateTransform();
+        }, { passive: false });
+
+        function startMoveArea(e, area) {
+            e.stopPropagation();
+            if (e.shiftKey) { if (!AppState.selectedAreaIds.includes(area.id)) AppState.selectedAreaIds.push(area.id); }
+            else { if (!AppState.selectedAreaIds.includes(area.id)) AppState.selectedAreaIds = [area.id]; }
+            AppState.background.selected = false; AppState.selectedSectorId = null;
+            AppState.activeAreaId = area.id;
+            updateUI();
+            AppState.interactionMode = 'move_area';
+            AppState.initialClickPoint = getMousePos(e);
+            AppState.initialPointsMap = {};
+            AppState.selectedAreaIds.forEach(id => {
+                const a = AppState.areas.find(ar => ar.id === id);
+                if(a) AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points));
+            });
+            renderMap();
+        }
+
+        function startMoveCorner(e, area, idx) {
+            e.stopPropagation();
+            AppState.interactionMode = 'move_corner';
+            AppState.activeAreaId = area.id; AppState.activeCornerIndex = idx;
+            AppState.initialClickPoint = getMousePos(e);
+            AppState.initialPointsMap = {[area.id]: JSON.parse(JSON.stringify(area.points))};
+        }
+
+        function startMoveEdge(e, area, edgeIdx) {
+            e.stopPropagation();
+            AppState.interactionMode = 'move_edge';
+            AppState.activeAreaId = area.id; AppState.activeEdgeIndex = edgeIdx;
+            AppState.initialClickPoint = getMousePos(e);
+            AppState.initialPointsMap = {};
+            // Registramos puntos iniciales de todas las áreas seleccionadas
+            AppState.selectedAreaIds.forEach(id => {
+                const a = AppState.areas.find(ar => ar.id === id);
+                if(a) AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points));
+            });
+        }
+
+        function startRotateArea(e, area) {
+            e.stopPropagation();
+            AppState.interactionMode = 'rotate_area'; AppState.activeAreaId = area.id;
+            AppState.initialCenter = getCentroid(area.points);
+            AppState.initialPointsMap = {[area.id]: JSON.parse(JSON.stringify(area.points))};
+            const m = getMousePos(e);
+            AppState.initialAngle = Math.atan2(m.y - AppState.initialCenter.y, m.x - AppState.initialCenter.x);
+        }
+        
+        function startRotateGroup(e, bounds) {
+            e.stopPropagation();
+            AppState.interactionMode = 'rotate_group';
+            AppState.initialCenter = { x: bounds.centerX, y: bounds.centerY };
+            AppState.initialPointsMap = {};
+            AppState.selectedAreaIds.forEach(id => {
+                const a = AppState.areas.find(ar => ar.id === id);
+                if(a) AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points));
+            });
+            const m = getMousePos(e);
+            AppState.initialAngle = Math.atan2(m.y - AppState.initialCenter.y, m.x - AppState.initialCenter.x);
+        }
+
+        function startMoveBackground(e) {
+            e.stopPropagation();
+            AppState.background.selected = true; AppState.selectedAreaIds = []; AppState.selectedSectorId = null;
+            updateUI(); renderMap();
+            AppState.interactionMode = 'move_bg';
+            AppState.initialClickPoint = getMousePos(e);
+            AppState.initialBgRect = {x: AppState.background.x, y: AppState.background.y};
+        }
+
+        function startResizeBackground(e, idx) {
+            e.stopPropagation();
+            AppState.interactionMode = 'resize_bg'; AppState.activeCornerIndex = idx;
+            AppState.initialClickPoint = getMousePos(e);
+            AppState.initialBgRect = {...AppState.background};
+        }
+        
+        function startBoxSelection(e) {
+            AppState.interactionMode = 'box_select';
+            AppState.boxSelectStart = getMousePos(e);
+            AppState.boxSelectInitialSelection = [...AppState.selectedAreaIds];
+            const marquee = document.getElementById('selection-marquee');
+            marquee.classList.add('active');
+        }
+        
+        function updateBoxSelection(e) {
+            const current = getMousePos(e);
+            const start = AppState.boxSelectStart;
+            const x = Math.min(start.x, current.x), y = Math.min(start.y, current.y);
+            const w = Math.abs(current.x - start.x), h = Math.abs(current.y - start.y);
+            const marquee = document.getElementById('selection-marquee');
+            marquee.setAttribute('x', x); marquee.setAttribute('y', y);
+            marquee.setAttribute('width', w); marquee.setAttribute('height', h);
+            const boxRect = { minX: x, maxX: x + w, minY: y, maxY: y + h };
+            const intersectingIds = [];
+            AppState.areas.forEach(area => {
+                const bounds = getBounds(area.points);
+                if (bounds.minX < boxRect.maxX && bounds.maxX > boxRect.minX &&
+                    bounds.minY < boxRect.maxY && bounds.maxY > boxRect.minY) {
+                    intersectingIds.push(area.id);
+                }
+            });
+            const newSelection = new Set([...AppState.boxSelectInitialSelection, ...intersectingIds]);
+            AppState.selectedAreaIds = Array.from(newSelection);
+            renderMap(); 
+        }
+
+        document.addEventListener('mousemove', (e) => {
+            if (!AppState.interactionMode) return;
+            const m = getMousePos(e);
+            const dx = m.x - AppState.initialClickPoint.x; 
+            const dy = m.y - AppState.initialClickPoint.y;
+
+            if (AppState.interactionMode === 'move_area') {
+                AppState.selectedAreaIds.forEach(id => {
+                    const a = AppState.areas.find(ar => ar.id === id);
+                    const init = AppState.initialPointsMap[id];
+                    if (a && init) a.points = init.map(p => ({x: p.x+dx, y: p.y+dy}));
+                });
+                renderMap();
+            } else if (AppState.interactionMode === 'move_corner') {
+                const a = AppState.areas.find(ar => ar.id === AppState.activeAreaId);
+                const init = AppState.initialPointsMap[a.id];
+                a.points[AppState.activeCornerIndex] = {x: init[AppState.activeCornerIndex].x+dx, y: init[AppState.activeCornerIndex].y+dy};
+                renderMap();
+            } else if (AppState.interactionMode === 'move_edge') {
+                const activeArea = AppState.areas.find(ar => ar.id === AppState.activeAreaId);
+                const idx1 = AppState.activeEdgeIndex;
+                const idx2 = (idx1 + 1) % 4;
+                const p1 = activeArea.points[idx1], p2 = activeArea.points[idx2];
+                
+                // Vector del lado y vector normal
+                const evx = p2.x - p1.x, evy = p2.y - p1.y;
+                const len = Math.sqrt(evx * evx + evy * evy);
+                const nx = -evy / len, ny = evx / len; // Normal unitaria
+
+                // Proyección del movimiento del ratón sobre la normal
+                const dot = dx * nx + dy * ny;
+                const projX = dot * nx, projY = dot * ny;
+
+                // Aplicar el movimiento restringido a todas las áreas seleccionadas
+                AppState.selectedAreaIds.forEach(id => {
+                    const a = AppState.areas.find(ar => ar.id === id);
+                    const init = AppState.initialPointsMap[id];
+                    if(a && init) {
+                        a.points[idx1] = {x: init[idx1].x + projX, y: init[idx1].y + projY};
+                        a.points[idx2] = {x: init[idx2].x + projX, y: init[idx2].y + projY};
+                    }
+                });
+                renderMap();
+            } else if (AppState.interactionMode === 'rotate_area') {
+                const a = AppState.areas.find(ar => ar.id === AppState.activeAreaId);
+                const ca = Math.atan2(m.y - AppState.initialCenter.y, m.x - AppState.initialCenter.x);
+                const da = ca - AppState.initialAngle;
+                const cos = Math.cos(da), sin = Math.sin(da), cx = AppState.initialCenter.x, cy = AppState.initialCenter.y;
+                const init = AppState.initialPointsMap[a.id];
+                a.points = init.map(p => ({x: cx+(p.x-cx)*cos-(p.y-cy)*sin, y: cy+(p.x-cx)*sin+(p.y-cy)*cos}));
+                renderMap();
+            } else if (AppState.interactionMode === 'move_bg') {
+                AppState.background.x = AppState.initialBgRect.x + dx;
+                AppState.background.y = AppState.initialBgRect.y + dy;
+                renderMap();
+            } else if (AppState.interactionMode === 'resize_bg') {
+                const r = AppState.initialBgRect, idx = AppState.activeCornerIndex;
+                if (idx===0) { AppState.background.x=r.x+dx; AppState.background.y=r.y+dy; AppState.background.w=r.w-dx; AppState.background.h=r.h-dy; }
+                else if (idx===1) { AppState.background.y=r.y+dy; AppState.background.w=r.w+dx; AppState.background.h=r.h-dy; }
+                else if (idx===2) { AppState.background.w=r.w+dx; AppState.background.h=r.h+dy; }
+                else if (idx===3) { AppState.background.x=r.x+dx; AppState.background.w=r.w-dx; AppState.background.h=r.h+dy; }
+                renderMap();
+            } else if (AppState.interactionMode === 'box_select') {
+                updateBoxSelection(e);
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (AppState.interactionMode === 'box_select') {
+                 document.getElementById('selection-marquee').classList.remove('active');
+                 updateUI();
+            }
+            AppState.interactionMode = null;
+        });
+
+        viewport.addEventListener('mousedown', (e) => {
+            if (e.shiftKey) { startBoxSelection(e); return; }
+            if (e.target.id === 'main-viewport' || e.target.id === 'map-svg' || (e.target.tagName === 'image' && AppState.background.locked)) {
+                AppState.isDraggingMap = true; AppState.dragStart = {x: e.clientX, y: e.clientY};
+                if (e.target.tagName !== 'image') { AppState.selectedAreaIds = []; AppState.background.selected = false; AppState.selectedSectorId = null; }
+                updateUI(); renderMap();
+            }
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (AppState.isDraggingMap) {
+                const dx = e.clientX - AppState.dragStart.x, dy = e.clientY - AppState.dragStart.y;
+                AppState.dragStart = {x: e.clientX, y: e.clientY};
+                AppState.panX += dx; AppState.panY += dy;
+                updateTransform();
+            }
+        });
+        document.addEventListener('mouseup', () => AppState.isDraggingMap = false);
+
+        function adjustZoom(d) { 
+            const rect = viewport.getBoundingClientRect();
+            const cx = rect.width / 2, cy = rect.height / 2;
+            const wx = (cx - AppState.panX) / AppState.zoom, wy = (cy - AppState.panY) / AppState.zoom;
+            let newZoom = Math.max(0.1, Math.min(5, AppState.zoom + d));
+            AppState.panX = cx - wx * newZoom; AppState.panY = cy - wy * newZoom; AppState.zoom = newZoom;
+            updateTransform();
+        }
+        function resetZoom() { AppState.zoom = 1; AppState.panX = 0; AppState.panY = 0; updateTransform(); }
+
+        function renderTreeList() {
+            const list = document.getElementById('tree-list');
+            list.innerHTML = '';
+            AppState.sectors.forEach(sector => {
+                const secContainer = document.createElement('div');
+                const secHeader = document.createElement('div');
+                secHeader.className = `sector-header ${AppState.selectedSectorId === sector.id ? 'active' : ''}`;
+                secHeader.innerHTML = `<div class="flex items-center gap-1"><i data-lucide="folder" class="w-3 h-3 text-indigo-500"></i><span class="truncate font-bold">${sector.title || sector.id}</span></div>`;
+                secHeader.onclick = () => selectSector(sector.id);
+                secContainer.appendChild(secHeader);
+                const sectorAreas = AppState.areas.filter(a => a.sectorId === sector.id);
+                sectorAreas.forEach(area => {
+                    const isSel = AppState.selectedAreaIds.includes(area.id);
+                    const item = document.createElement('div');
+                    item.className = `area-item ${isSel ? 'active' : ''}`;
+                    item.innerHTML = `<span class="truncate">${area.title || area.code || 'Sin Nombre'}</span>`;
+                    item.onclick = (e) => { e.stopPropagation(); if (e.ctrlKey || e.metaKey) toggleSelection(area.id, true); else toggleSelection(area.id, false); AppState.activeAreaId = area.id; renderMap(); };
+                    secContainer.appendChild(item);
+                });
+                list.appendChild(secContainer);
+            });
+            lucide.createIcons();
+        }
+
+        function selectSector(id) {
+            AppState.selectedSectorId = id; AppState.selectedAreaIds = []; AppState.background.selected = false; updateUI();
+        }
+
+        function updateUI() {
+            renderTreeList();
+            const noSel = document.getElementById('no-selection'), multiInfo = document.getElementById('multi-selection-info');
+            const bgEditInfo = document.getElementById('bg-edit-info'), areaForm = document.getElementById('area-form');
+            const sectorForm = document.getElementById('sector-form'), tools = document.getElementById('alignment-tools');
+            [noSel, multiInfo, bgEditInfo, areaForm, sectorForm].forEach(el => el.classList.add('hidden'));
+            const canAlign = AppState.selectedAreaIds.length > 1;
+            const canDistribute = AppState.selectedAreaIds.length > 2;
+            tools.querySelectorAll('button:not([id^="btn-dist"])').forEach(b => b.disabled = !canAlign);
+            tools.querySelectorAll('button[id^="btn-dist"]').forEach(b => b.disabled = !canDistribute);
+            tools.style.opacity = canAlign ? "1" : "0.5"; 
+            if (!AppState.background.locked && AppState.background.selected) { bgEditInfo.classList.remove('hidden'); }
+            else if (AppState.selectedSectorId) { sectorForm.classList.remove('hidden'); populateSectorForm(); }
+            else if (AppState.selectedAreaIds.length === 1) { areaForm.classList.remove('hidden'); populateAreaForm(); }
+            else if (AppState.selectedAreaIds.length > 1) { multiInfo.classList.remove('hidden'); document.getElementById('multi-count').innerText = AppState.selectedAreaIds.length; }
+            else { noSel.classList.remove('hidden'); }
+        }
+
+        function createNewSector() {
+            const nextIdx = AppState.sectors.length + 1; const defaultId = `SECTOR-${nextIdx}`;
+            let newId = prompt("ID del nuevo Sector:", defaultId);
+            if (newId === null) return; 
+            newId = newId.trim(); if (newId === "") { alert("El ID no puede estar vacío."); return; }
+            if (AppState.sectors.some(s => s.id.toUpperCase() === newId.toUpperCase())) { alert("Ya existe un sector con ese ID."); return; }
+            AppState.sectors.push({ id: newId, title: newId });
+            selectSector(newId);
+        }
+
+        function populateSectorForm() {
+            const s = AppState.sectors.find(s => s.id === AppState.selectedSectorId); if (!s) return;
+            document.getElementById('prop-sec-id').value = s.id; document.getElementById('prop-sec-title').value = s.title;
+        }
+
+        function updateSelectedSectorFromForm() {
+            const s = AppState.sectors.find(s => s.id === AppState.selectedSectorId); if (!s) return;
+            const newId = document.getElementById('prop-sec-id').value; const newTitle = document.getElementById('prop-sec-title').value;
+            if (newId !== s.id) {
+                if (AppState.sectors.find(x => x.id === newId && x !== s)) return;
+                AppState.areas.forEach(a => { if (a.sectorId === s.id) a.sectorId = newId; });
+                s.id = newId; AppState.selectedSectorId = newId;
+            }
+            s.title = newTitle; renderTreeList();
+        }
+
+        function deleteSelectedSector() {
+            const sId = AppState.selectedSectorId; const count = AppState.areas.filter(a => a.sectorId === sId).length;
+            if(!confirm(`¿Borrar el sector "${sId}" y sus ${count} áreas asociadas?`)) return;
+            const areasToDelete = AppState.areas.filter(a => a.sectorId === sId).map(a => a.id);
+            AppState.seats = AppState.seats.filter(s => !areasToDelete.includes(s.areaId));
+            AppState.areas = AppState.areas.filter(a => a.sectorId !== sId);
+            AppState.sectors = AppState.sectors.filter(s => s.id !== sId);
+            AppState.selectedSectorId = null; renderMap(); updateUI();
+        }
+
+        function populateAreaForm() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if (!a) return;
+            document.getElementById('prop-area-id').value = a.id; document.getElementById('prop-title').value = a.title; document.getElementById('prop-code').value = a.code;
+            const sel = document.getElementById('prop-sector-select'); sel.innerHTML = '';
+            AppState.sectors.forEach(s => {
+                const opt = document.createElement('option'); opt.value = s.id; opt.innerText = `${s.title} (${s.id})`;
+                if (s.id === a.sectorId) opt.selected = true; sel.appendChild(opt);
+            });
+        }
+
+        function updateSelectedAreaFromForm() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if (!a) return;
+            a.id = document.getElementById('prop-area-id').value; a.title = document.getElementById('prop-title').value; a.code = document.getElementById('prop-code').value;
+            renderTreeList(); renderMap();
+        }
+
+        function updateSelectedAreaSector() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if (!a) return;
+            a.sectorId = document.getElementById('prop-sector-select').value; renderTreeList();
+        }
+
+        function createNewArea() {
+            let targetSectorId = AppState.selectedSectorId || (AppState.sectors[0] ? AppState.sectors[0].id : 'default-sec');
+            if (AppState.sectors.length === 0) { AppState.sectors.push({ id: 'default-sec', title: 'General' }); targetSectorId = 'default-sec'; }
+            const newId = generateUUID();
+            const rect = viewport.getBoundingClientRect();
+            let startX = (rect.width/2 - AppState.panX) / AppState.zoom;
+            let startY = (rect.height/2 - AppState.panY) / AppState.zoom;
+            const w=160, h=100; 
+            AppState.areas.push({
+                id: newId, title: 'Nueva Área', code: 'NEW', sectorId: targetSectorId,
+                points: [{x:startX,y:startY},{x:startX+w,y:startY},{x:startX+w,y:startY+h},{x:startX,y:startY+h}],
+                rowMin: 1, rowMax: 5, seatMin: 1, seatMax: 10
+            });
+            toggleSelection(newId, false); renderMap(); updateUI();
+        }
+
+        function deleteSelectedArea() {
+            if (AppState.selectedAreaIds.length === 0) return;
+            if(!confirm("¿Borrar áreas seleccionadas?")) return;
+            AppState.selectedAreaIds.forEach(id => {
+                AppState.seats = AppState.seats.filter(s => s.areaId !== id);
+                AppState.areas = AppState.areas.filter(a => a.id !== id);
+            });
+            AppState.selectedAreaIds = []; renderMap(); updateUI();
+        }
+
+        function alignSelection(alignment) {
+            if (AppState.selectedAreaIds.length < 2) return;
+            const areas = AppState.selectedAreaIds.map(id => AppState.areas.find(a => a.id === id));
+            const bounds = areas.map(a => getBounds(a.points));
+            let target;
+            if (alignment === 'top') { target = Math.min(...bounds.map(b => b.minY)); areas.forEach((a, i) => { const dy = target - bounds[i].minY; a.points = a.points.map(p => ({x: p.x, y: p.y+dy})); }); }
+            else if (alignment === 'bottom') { target = Math.max(...bounds.map(b => b.maxY)); areas.forEach((a, i) => { const dy = target - bounds[i].maxY; a.points = a.points.map(p => ({x: p.x, y: p.y+dy})); }); }
+            else if (alignment === 'left') { target = Math.min(...bounds.map(b => b.minX)); areas.forEach((a, i) => { const dx = target - bounds[i].minX; a.points = a.points.map(p => ({x: p.x+dx, y: p.y})); }); }
+            else if (alignment === 'right') { target = Math.max(...bounds.map(b => b.maxX)); areas.forEach((a, i) => { const dx = target - bounds[i].maxX; a.points = a.points.map(p => ({x: p.x+dx, y: p.y})); }); }
+            renderMap();
+        }
+        
+        function distributeSelection(axis) {
+            if (AppState.selectedAreaIds.length < 3) return; 
+            const areas = AppState.selectedAreaIds.map(id => AppState.areas.find(a => a.id === id));
+            if (axis === 'horizontal') areas.sort((a, b) => getBounds(a.points).minX - getBounds(b.points).minX);
+            else areas.sort((a, b) => getBounds(a.points).minY - getBounds(b.points).minY);
+            const boundsList = areas.map(a => getBounds(a.points));
+            if (axis === 'horizontal') {
+                const totalGap = (boundsList[areas.length-1].minX - boundsList[0].maxX) - boundsList.slice(1,-1).reduce((acc,b)=>acc+b.width,0);
+                const gap = totalGap / (areas.length - 1);
+                let cur = boundsList[0].maxX + gap;
+                for (let i = 1; i < areas.length - 1; i++) {
+                    const dx = cur - boundsList[i].minX;
+                    areas[i].points = areas[i].points.map(p => ({x: p.x + dx, y: p.y}));
+                    cur += boundsList[i].width + gap;
+                }
+            } else {
+                const totalGap = (boundsList[areas.length-1].minY - boundsList[0].maxY) - boundsList.slice(1,-1).reduce((acc,b)=>acc+b.height,0);
+                const gap = totalGap / (areas.length - 1);
+                let cur = boundsList[0].maxY + gap;
+                for (let i = 1; i < areas.length - 1; i++) {
+                    const dy = cur - boundsList[i].minY;
+                    areas[i].points = areas[i].points.map(p => ({x: p.x, y: p.y + dy}));
+                    cur += boundsList[i].height + gap;
+                }
+            }
+            renderMap();
+        }
+
+        // --- Grid Editor ---
+        let isDrawingSeats = false, drawingMode = true;
+        function openSeatEditor() {
+            if (AppState.selectedAreaIds.length !== 1) return;
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if (!a) return;
+            document.getElementById('modal-title').innerText = `${a.title} (${a.code})`;
+            document.getElementById('modal-row-min').value = a.rowMin; document.getElementById('modal-row-max').value = a.rowMax;
+            document.getElementById('modal-seat-min').value = a.seatMin; document.getElementById('modal-seat-max').value = a.seatMax;
+            setEditMode('paint'); AppState.selectedSeatLoc = null; updateDetailPanel();
+            document.getElementById('seat-modal').classList.remove('hidden');
+            renderSeatGrid(a);
+        }
+        function closeSeatEditor() { renderMap(); document.getElementById('seat-modal').classList.add('hidden'); }
+        function setEditMode(mode) {
+            AppState.seatEditMode = mode;
+            document.getElementById('mode-paint').className = mode==='paint' ? 'px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800' : 'px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100';
+            document.getElementById('mode-select').className = mode==='select' ? 'px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800' : 'px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100';
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]);
+            if(a) renderSeatGrid(a);
+        }
+        function updateGridDimensions() {
+             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
+             a.rowMin=parseInt(document.getElementById('modal-row-min').value)||a.rowMin; a.rowMax=parseInt(document.getElementById('modal-row-max').value)||a.rowMax;
+             a.seatMin=parseInt(document.getElementById('modal-seat-min').value)||a.seatMin; a.seatMax=parseInt(document.getElementById('modal-seat-max').value)||a.seatMax;
+             renderSeatGrid(a);
+        }
+        function expandGrid(d) {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
+            if(d==='top') a.rowMax++; if(d==='bottom') a.rowMin--; if(d==='left') a.seatMin--; if(d==='right') a.seatMax++;
+            document.getElementById('modal-row-min').value=a.rowMin; document.getElementById('modal-row-max').value=a.rowMax;
+            document.getElementById('modal-seat-min').value=a.seatMin; document.getElementById('modal-seat-max').value=a.seatMax;
+            renderSeatGrid(a);
+        }
+        function renderSeatGrid(area) {
+            const cont = document.getElementById('grid-container'); cont.innerHTML = '';
+            const cols = (area.seatMax - area.seatMin) + 1;
+            cont.style.gridTemplateColumns = `30px repeat(${cols}, 24px)`;
+            const existing = AppState.seats.filter(s => s.areaId === area.id);
+            cont.appendChild(document.createElement('div'));
+            for (let s=area.seatMin; s<=area.seatMax; s++) { const d=document.createElement('div'); d.className='grid-header-col'; d.innerText=s; cont.appendChild(d); }
+            for (let r=area.rowMax; r>=area.rowMin; r--) {
+                const dr=document.createElement('div'); dr.className='grid-header-row'; dr.innerText=r; cont.appendChild(dr);
+                for (let s=area.seatMin; s<=area.seatMax; s++) {
+                    const active = existing.find(x => x.rowPos === r && x.seatPos === s);
+                    const c = document.createElement('div'); 
+                    c.className = `seat-cell ${active?'active':''} ${AppState.selectedSeatLoc?.r===r && AppState.selectedSeatLoc?.s===s ? 'selected-seat' : ''}`;
+                    if (AppState.seatEditMode === 'paint') {
+                        c.onmousedown=()=>{ isDrawingSeats=true; drawingMode = !c.classList.contains('active'); toggleSeat(area,r,s,drawingMode); c.classList.toggle('active',drawingMode); };
+                        c.onmouseenter=()=>{ if(isDrawingSeats && c.classList.contains('active')!==drawingMode){ toggleSeat(area,r,s,drawingMode); c.classList.toggle('active',drawingMode); } };
+                    } else { c.onclick = () => selectSeatInGrid(area, r, s); }
+                    cont.appendChild(c);
+                }
+            }
+            document.getElementById('seat-count-display').innerText = `${existing.length} Asientos`;
+        }
+        document.addEventListener('mouseup', () => isDrawingSeats=false);
+        function toggleSeat(area, r, s, add) {
+            const idx = AppState.seats.findIndex(x => x.areaId===area.id && x.rowPos===r && x.seatPos===s);
+            if (add && idx===-1) AppState.seats.push({ seatId: generateUUID(), areaId: area.id, sectorId: area.sectorId, rowPos: r, seatPos: s, rowNum: r.toString(), seatNum: s.toString() });
+            else if (!add && idx!==-1) AppState.seats.splice(idx, 1);
+            document.getElementById('seat-count-display').innerText = `${AppState.seats.filter(x=>x.areaId===area.id).length} Asientos`;
+        }
+        function selectSeatInGrid(area, r, s) {
+            AppState.selectedSeatLoc = { r, s };
+            if (!AppState.seats.find(x => x.areaId===area.id && x.rowPos===r && x.seatPos===s)) AppState.seats.push({ seatId: generateUUID(), areaId: area.id, sectorId: area.sectorId, rowPos: r, seatPos: s, rowNum: r.toString(), seatNum: s.toString() });
+            renderSeatGrid(area); updateDetailPanel();
+        }
+        function updateDetailPanel() {
+            const panel = document.getElementById('seat-details-panel'), noSel = document.getElementById('seat-no-selection'), form = document.getElementById('seat-edit-form');
+            if (!AppState.selectedSeatLoc) { panel.classList.toggle('hidden', AppState.seatEditMode!=='select'); noSel.classList.remove('hidden'); form.classList.add('hidden'); return; }
+            panel.classList.remove('hidden'); noSel.classList.add('hidden'); form.classList.remove('hidden');
+            const seat = AppState.seats.find(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc.r && x.seatPos===AppState.selectedSeatLoc.s);
+            if (seat) { ['detail-seat-id','detail-pos-row','detail-pos-col','detail-row-num','detail-seat-num'].forEach(id => document.getElementById(id).value = seat[id.replace('detail-','').replace('pos-','Pos').replace('row-','row').replace('seat-','seat')]); }
+        }
+        function updateSelectedSeatData() {
+            if (!AppState.selectedSeatLoc) return;
+            const seat = AppState.seats.find(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc.r && x.seatPos===AppState.selectedSeatLoc.s);
+            if (seat) { seat.seatId = document.getElementById('detail-seat-id').value; seat.rowNum = document.getElementById('detail-row-num').value; seat.seatNum = document.getElementById('detail-seat-num').value; }
+        }
+        function deleteSelectedSeat() {
+            const idx = AppState.seats.findIndex(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
+            if (idx !== -1) { AppState.seats.splice(idx, 1); AppState.selectedSeatLoc = null; renderSeatGrid(AppState.areas.find(a=>a.id===AppState.selectedAreaIds[0])); updateDetailPanel(); }
+        }
+        function fillAllSeats() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
+            for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,true);
+            renderSeatGrid(a);
+        }
+        function clearAllSeats() {
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a && !confirm("¿Vaciar?")) return;
+            for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,false);
+            renderSeatGrid(a);
+        }
+
+        updateUI();
+        renderMap();
+    </script>
+</body>
+</html>
