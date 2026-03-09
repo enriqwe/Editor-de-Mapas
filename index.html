@@ -121,10 +121,16 @@
             <button onclick="distributeSelection('vertical')" class="p-1.5 hover:bg-gray-200 rounded text-gray-700" title="Distribuir Verticalmente" id="btn-dist-v">
                 <i data-lucide="stretch-vertical" class="w-4 h-4"></i>
             </button>
+
+            <!-- Botón para alinear en curva -->
+            <div class="w-px h-4 bg-gray-300 mx-1"></div>
+            <button onclick="startCurveAlignment()" class="p-1.5 hover:bg-purple-100 rounded text-purple-700 font-bold text-xs flex items-center gap-1" title="Alinear en Curva" id="btn-curve-align">
+                <i data-lucide="git-merge" class="w-4 h-4"></i> Curvar
+            </button>
         </div>
 
         <div class="flex gap-3 items-center">
-            <button id="toggle-seats-btn" onclick="toggleShowSeats()" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold border rounded transition-colors bg-white border-gray-300 text-gray-500 hover:bg-gray-50">
+            <button id="toggle-seats-btn" onclick="toggleShowSeats()" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-bold border rounded transition-colors bg-white border-gray-300 text-gray-700 hover:bg-gray-50">
                 <i data-lucide="layout-grid" class="w-4 h-4"></i>
                 <span>Ver Asientos</span>
             </button>
@@ -151,6 +157,20 @@
         </div>
     </header>
 
+    <!-- UI Overlay de Curva -->
+    <div id="curve-banner" class="hidden absolute top-14 left-0 w-full bg-purple-600 text-white p-2 flex justify-center items-center gap-4 z-40 shadow-md">
+        <i data-lucide="info" class="w-5 h-5"></i>
+        <span id="curve-msg" class="font-medium text-sm">Paso 1: Haz clic y arrastra para dibujar la línea base de la curva.</span>
+        
+        <div id="curve-intensity-container" class="hidden flex items-center gap-2 bg-purple-800 px-2 py-1 rounded">
+            <label class="text-xs font-bold uppercase tracking-wider text-purple-200" title="Desplazamiento del centro (offset)">Curvatura:</label>
+            <input type="number" id="curve-intensity-input" class="w-16 text-black text-center text-xs p-1 rounded outline-none border-none shadow-inner" value="0" oninput="updateCurveFromInput()">
+        </div>
+
+        <button id="curve-apply" onclick="applyCurveAlignment()" class="hidden px-3 py-1 bg-white text-purple-700 font-bold rounded text-xs shadow-sm hover:bg-gray-100">Aplicar</button>
+        <button onclick="cancelCurveAlignment()" class="px-3 py-1 bg-purple-800 text-white font-bold rounded text-xs shadow-sm hover:bg-purple-900 border border-purple-500">Cancelar</button>
+    </div>
+
     <!-- Main Content -->
     <div class="flex flex-1 overflow-hidden relative">
         
@@ -162,7 +182,7 @@
                         <i data-lucide="settings-2" class="w-4 h-4"></i> Propiedades
                     </h2>
                     <div id="clipboard-tools" class="flex gap-1 hidden">
-                        <button onclick="copySelectedShape()" class="p-1.5 hover:bg-blue-100 text-blue-600 rounded border border-blue-200 bg-white" title="Copiar Forma">
+                        <button onclick="copySelectedShape()" class="p-1.5 hover:bg-blue-100 text-blue-600 rounded border border-blue-200 bg-white" title="Copiar Forma (Solo Silueta)">
                             <i data-lucide="copy" class="w-3.5 h-3.5"></i>
                         </button>
                         <button id="btn-paste-shape" onclick="pasteShapeToSelected()" class="p-1.5 hover:bg-green-100 text-green-600 rounded border border-green-200 bg-white opacity-50 cursor-not-allowed" title="Pegar Forma" disabled>
@@ -175,7 +195,21 @@
                     <span class="font-bold block text-lg mb-1" id="multi-count">0</span> Áreas seleccionadas
                 </div>
                 
-                <!-- Formulario de Fondo (Actualizado para permitir edición tipo área) -->
+                <!-- Formulario de Grupo Curvo -->
+                <div id="group-form" class="hidden space-y-3 text-sm border-l-4 border-purple-500 pl-3 mb-4">
+                    <div class="text-xs font-bold text-purple-600 uppercase mb-2 flex items-center gap-1">
+                        <i data-lucide="git-commit" class="w-3.5 h-3.5"></i> Curva Agrupada
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="text-xs font-medium text-gray-500 w-16">Curvatura:</label>
+                        <input type="number" id="prop-group-intensity" class="flex-1 border-gray-300 rounded-md shadow-sm border p-1 text-center text-xs" oninput="updateExistingGroupCurve()">
+                    </div>
+                    <button type="button" onclick="ungroupSelected()" class="w-full text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 mt-2 transition-colors">
+                        <i data-lucide="unlink" class="w-3 h-3"></i> Desagrupar
+                    </button>
+                </div>
+
+                <!-- Formulario de Fondo -->
                 <div id="bg-edit-info" class="hidden text-sm p-4 bg-purple-50 text-purple-800 rounded border border-purple-200 space-y-3">
                     <div class="font-bold flex items-center gap-2 mb-1 text-purple-700">
                         <i data-lucide="image" class="w-4 h-4"></i> Propiedades del Fondo
@@ -242,11 +276,11 @@
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="block text-xs font-medium text-gray-500">Ancho (px)</label>
-                            <input type="number" id="prop-width" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateAreaDimensions()">
+                            <input type="number" id="prop-width" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" onchange="updateAreaDimensions()">
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-500">Alto (px)</label>
-                            <input type="number" id="prop-height" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" oninput="updateAreaDimensions()">
+                            <input type="number" id="prop-height" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" onchange="updateAreaDimensions()">
                         </div>
                     </div>
                     <div>
@@ -272,9 +306,9 @@
         <!-- Canvas -->
         <div class="flex-1 relative overflow-hidden flex flex-col">
             <div class="absolute top-4 right-4 z-50 flex flex-col gap-1 bg-white shadow rounded">
-                <button onclick="adjustZoom(0.1)" class="p-2 hover:bg-gray-100">+</button>
-                <button onclick="resetZoom()" class="p-2 text-xs font-bold hover:bg-gray-100">100%</button>
-                <button onclick="adjustZoom(-0.1)" class="p-2 hover:bg-gray-100">-</button>
+                <button onclick="adjustZoom(0.1)" class="p-2 hover:bg-gray-100" title="Acercar">+</button>
+                <button onclick="resetZoom()" class="p-2 text-xs font-bold hover:bg-gray-100" title="Restablecer Zoom">100%</button>
+                <button onclick="adjustZoom(-0.1)" class="p-2 hover:bg-gray-100" title="Alejar">-</button>
             </div>
             <main id="main-viewport" class="flex-1 relative bg-gray-200 w-full h-full">
                 <div id="map-container" class="relative origin-top-left">
@@ -311,6 +345,7 @@
                         <span>FIL:</span><input type="number" id="modal-row-min" class="w-12 text-center border rounded" onchange="updateGridDimensions()"><span>-</span><input type="number" id="modal-row-max" class="w-12 text-center border rounded" onchange="updateGridDimensions()">
                         <div class="w-px h-4 bg-gray-300 mx-2"></div>
                         <span>COL:</span><input type="number" id="modal-seat-min" class="w-12 text-center border rounded" onchange="updateGridDimensions()"><span>-</span><input type="number" id="modal-seat-max" class="w-12 text-center border rounded" onchange="updateGridDimensions()">
+                        <button onclick="ajustarTamanoArea()" class="ml-2 px-3 py-1 text-xs font-bold text-red-600 border border-red-500 rounded hover:bg-red-50 transition-colors">Ajustar tamaño</button>
                     </div>
                 </div>
                 <button onclick="closeSeatEditor()" class="text-gray-500 hover:text-gray-800"><i data-lucide="x"></i></button>
@@ -383,22 +418,36 @@
             seats: [], 
             sectors: [{ id: 'default-sec', title: 'Sector General' }], 
             areas: [], 
+            groups: {}, // { [groupId]: { id, type: 'curve', p0, p1, p2, originalPointsMap, orderedIds } }
             background: { url: null, x: 0, y: 0, w: 0, h: 0, locked: true, selected: false },
             zoom: 1, 
             selectedAreaIds: [], 
             selectedSectorId: null, 
+            activeGroupId: null, // Si la selección actual corresponde exactamente a un grupo
+            isolatedAreaId: null, // Área temporalmente aislada de su grupo para edición individual
             isDraggingMap: false, panX: 0, panY: 0,
             interactionMode: null, activeAreaId: null, activeCornerIndex: -1, activeEdgeIndex: -1, initialClickPoint: { x: 0, y: 0 },
             initialPointsMap: {}, initialCenter: { x: 0, y: 0 }, initialAngle: 0, initialBgRect: { x:0, y:0, w:0, h:0 },
+            initialGroupData: null, initialGroupOriginalPoints: {},
             boxSelectStart: { x: 0, y: 0 },
             boxSelectInitialSelection: [],
             seatEditMode: 'paint', selectedSeatLoc: null,
             showSeatsInMap: false,
             shapeClipboard: null,
+            areaClipboard: [], 
+            history: [],       
             expandedSectors: new Set(),
             areaCounter: 0,
             sectorCounter: 0,
-            seatCounter: 0
+            seatCounter: 0,
+            
+            curveAlignment: {
+                active: false,
+                step: 0, 
+                p0: null, p1: null, p2: null,
+                originalPointsMap: {},
+                orderedIds: []
+            }
         };
 
         const GRID_STEP = 10; 
@@ -406,6 +455,371 @@
         let drawingMode = true;
 
         lucide.createIcons();
+
+        // --- SISTEMA DE HISTORIAL (UNDO) ---
+        function saveStateToHistory() {
+            const snapshot = {
+                areas: JSON.parse(JSON.stringify(AppState.areas)),
+                seats: JSON.parse(JSON.stringify(AppState.seats)),
+                sectors: JSON.parse(JSON.stringify(AppState.sectors)),
+                groups: JSON.parse(JSON.stringify(AppState.groups)),
+                background: JSON.parse(JSON.stringify(AppState.background)),
+                areaCounter: AppState.areaCounter,
+                sectorCounter: AppState.sectorCounter,
+                seatCounter: AppState.seatCounter
+            };
+            
+            if (AppState.history.length > 0) {
+                const last = AppState.history[AppState.history.length - 1];
+                if (JSON.stringify(last.areas) === JSON.stringify(snapshot.areas) &&
+                    JSON.stringify(last.seats) === JSON.stringify(snapshot.seats) &&
+                    JSON.stringify(last.sectors) === JSON.stringify(snapshot.sectors) &&
+                    JSON.stringify(last.groups) === JSON.stringify(snapshot.groups) &&
+                    JSON.stringify(last.background) === JSON.stringify(snapshot.background)) {
+                    return;
+                }
+            }
+            
+            if (AppState.history.length > 30) AppState.history.shift();
+            AppState.history.push(snapshot);
+        }
+
+        function undo() {
+            if (AppState.history.length === 0) return;
+            const prevState = AppState.history.pop();
+            
+            AppState.areas = prevState.areas;
+            AppState.seats = prevState.seats;
+            AppState.sectors = prevState.sectors;
+            AppState.groups = prevState.groups;
+            AppState.background = prevState.background;
+            AppState.areaCounter = prevState.areaCounter;
+            AppState.sectorCounter = prevState.sectorCounter;
+            AppState.seatCounter = prevState.seatCounter;
+            
+            AppState.selectedAreaIds = []; 
+            AppState.selectedSectorId = null;
+            AppState.activeGroupId = null;
+            AppState.isolatedAreaId = null;
+            
+            if (AppState.curveAlignment.active) {
+                AppState.curveAlignment.active = false;
+                AppState.interactionMode = null;
+            }
+            
+            renderMap();
+            updateUI();
+            
+            if (!document.getElementById('seat-modal').classList.contains('hidden') && AppState.activeAreaId) {
+                const a = AppState.areas.find(x => x.id === AppState.activeAreaId);
+                if (a) renderSeatGrid(a);
+                else closeSeatEditor();
+            }
+        }
+
+        // --- SISTEMA DE ALINEACIÓN EN CURVA Y GRUPOS ---
+        function startCurveAlignment() {
+            if (AppState.selectedAreaIds.length < 2) {
+                alert("Selecciona al menos 2 áreas para alinearlas en curva.");
+                return;
+            }
+            saveStateToHistory();
+            
+            AppState.curveAlignment = {
+                active: true,
+                step: 1,
+                p0: null, p1: null, p2: null,
+                originalPointsMap: {},
+                orderedIds: []
+            };
+            
+            AppState.selectedAreaIds.forEach(id => {
+                const a = AppState.areas.find(ar => ar.id === id);
+                if (a) AppState.curveAlignment.originalPointsMap[id] = JSON.parse(JSON.stringify(a.points));
+            });
+            
+            AppState.interactionMode = 'draw_curve_base';
+            updateUI();
+            renderMap();
+        }
+
+        function determineCurveOrder() {
+            const p0 = AppState.curveAlignment.p0;
+            const p2 = AppState.curveAlignment.p2;
+            const vx = p2.x - p0.x;
+            const vy = p2.y - p0.y;
+            const len2 = vx*vx + vy*vy;
+
+            const areasWithProj = AppState.selectedAreaIds.map(id => {
+                const orig = AppState.curveAlignment.originalPointsMap[id];
+                const c = getCentroid(orig);
+                const proj = ((c.x - p0.x) * vx + (c.y - p0.y) * vy) / (len2 || 1);
+                return { id, proj };
+            });
+
+            areasWithProj.sort((a, b) => a.proj - b.proj);
+            AppState.curveAlignment.orderedIds = areasWithProj.map(a => a.id);
+        }
+        
+        function getCurveIntensity(p0, p1, p2) {
+            if (!p0 || !p1 || !p2) return 0;
+            const dx = p2.x - p0.x;
+            const dy = p2.y - p0.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) return 0;
+
+            const nx = -dy / len;
+            const ny = dx / len;
+
+            const mx = (p0.x + p2.x) / 2;
+            const my = (p0.y + p2.y) / 2;
+
+            const vx = p1.x - mx;
+            const vy = p1.y - my;
+
+            return Math.round(vx * nx + vy * ny);
+        }
+        
+        function setCurveIntensity(p0, p2, offset) {
+            const dx = p2.x - p0.x;
+            const dy = p2.y - p0.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            if (len === 0) return null;
+
+            const nx = -dy / len;
+            const ny = dx / len;
+
+            const mx = (p0.x + p2.x) / 2;
+            const my = (p0.y + p2.y) / 2;
+
+            return { x: mx + nx * offset, y: my + ny * offset };
+        }
+        
+        function updateCurveFromInput() {
+            const input = document.getElementById('curve-intensity-input');
+            const offset = parseFloat(input.value) || 0;
+
+            const { p0, p2 } = AppState.curveAlignment;
+            if (!p0 || !p2) return;
+
+            AppState.curveAlignment.p1 = setCurveIntensity(p0, p2, offset);
+            previewCurveAlignment();
+            renderMap();
+        }
+
+        function updateExistingGroupCurve() {
+            if (!AppState.activeGroupId) return;
+            const grp = AppState.groups[AppState.activeGroupId];
+            const input = document.getElementById('prop-group-intensity');
+            const offset = parseFloat(input.value) || 0;
+            
+            saveStateToHistory();
+            grp.p1 = setCurveIntensity(grp.p0, grp.p2, offset);
+            executeCurveTransform(grp.p0, grp.p1, grp.p2, grp.orderedIds, grp.originalPointsMap);
+            renderMap();
+        }
+
+        function executeCurveTransform(p0, p1, p2, orderedIds, originalPointsMap) {
+            const N = orderedIds.length;
+            const baseAngle = Math.atan2(p2.y - p0.y, p2.x - p0.x);
+
+            orderedIds.forEach((id, index) => {
+                const area = AppState.areas.find(a => a.id === id);
+                if (!area || !originalPointsMap[id]) return;
+
+                const t = N > 1 ? index / (N - 1) : 0.5;
+
+                const mt = 1 - t;
+                const bx = mt*mt*p0.x + 2*mt*t*p1.x + t*t*p2.x;
+                const by = mt*mt*p0.y + 2*mt*t*p1.y + t*t*p2.y;
+
+                const tx = 2*mt*(p1.x - p0.x) + 2*t*(p2.x - p1.x);
+                const ty = 2*mt*(p1.y - p0.y) + 2*t*(p2.y - p1.y);
+                const tangentAngle = Math.atan2(ty, tx);
+
+                const orig = originalPointsMap[id];
+                const origC = getCentroid(orig);
+                const deltaAngle = tangentAngle - baseAngle;
+                const cos = Math.cos(deltaAngle);
+                const sin = Math.sin(deltaAngle);
+
+                area.points = orig.map(p => {
+                    const dx = p.x - origC.x;
+                    const dy = p.y - origC.y;
+                    return {
+                        x: bx + dx * cos - dy * sin,
+                        y: by + dx * sin + dy * cos
+                    };
+                });
+            });
+        }
+
+        function previewCurveAlignment() {
+            const ca = AppState.curveAlignment;
+            executeCurveTransform(ca.p0, ca.p1, ca.p2, ca.orderedIds, ca.originalPointsMap);
+        }
+
+        function applyCurveAlignment() {
+            const groupId = `group-${generateUUID()}`;
+            const ca = AppState.curveAlignment;
+            
+            const newGroup = {
+                id: groupId,
+                type: 'curve',
+                p0: ca.p0, p1: ca.p1, p2: ca.p2,
+                orderedIds: ca.orderedIds,
+                originalPointsMap: ca.originalPointsMap
+            };
+            
+            AppState.groups[groupId] = newGroup;
+            
+            ca.orderedIds.forEach(id => {
+                const area = AppState.areas.find(a => a.id === id);
+                if (area) area.groupId = groupId;
+            });
+
+            AppState.curveAlignment.active = false;
+            AppState.interactionMode = null;
+            AppState.activeGroupId = groupId;
+            
+            updateUI();
+            renderMap();
+        }
+
+        function cancelCurveAlignment() {
+            if (AppState.curveAlignment && AppState.curveAlignment.active) {
+                AppState.selectedAreaIds.forEach(id => {
+                    const area = AppState.areas.find(a => a.id === id);
+                    if (area && AppState.curveAlignment.originalPointsMap[id]) {
+                        area.points = JSON.parse(JSON.stringify(AppState.curveAlignment.originalPointsMap[id]));
+                    }
+                });
+                AppState.curveAlignment.active = false;
+                AppState.interactionMode = null;
+                updateUI();
+                renderMap();
+            }
+        }
+
+        function updateActiveGroup() {
+            AppState.activeGroupId = null;
+            if (AppState.selectedAreaIds.length > 0) {
+                const firstArea = AppState.areas.find(a => a.id === AppState.selectedAreaIds[0]);
+                if (firstArea && firstArea.groupId) {
+                    const groupAreas = AppState.areas.filter(a => a.groupId === firstArea.groupId);
+                    // Solo es activo si TODO el grupo está seleccionado (no si estamos en modo aislado)
+                    if (groupAreas.length === AppState.selectedAreaIds.length && groupAreas.every(a => AppState.selectedAreaIds.includes(a.id))) {
+                        AppState.activeGroupId = firstArea.groupId;
+                    }
+                }
+            }
+        }
+
+        function ungroupSelected() {
+            if (!AppState.activeGroupId) return;
+            saveStateToHistory();
+            const groupId = AppState.activeGroupId;
+            AppState.areas.forEach(a => {
+                if (a.groupId === groupId) delete a.groupId;
+            });
+            delete AppState.groups[groupId];
+            AppState.isolatedAreaId = null;
+            updateActiveGroup();
+            updateUI();
+            renderMap();
+        }
+
+        // --- SISTEMA DE PORTAPAPELES (COPY, CUT, PASTE) ---
+        function copyToClipboard() {
+            if (AppState.selectedAreaIds.length === 0) return;
+            AppState.areaClipboard = AppState.selectedAreaIds.map(id => {
+                const area = AppState.areas.find(a => a.id === id);
+                const seats = AppState.seats.filter(s => s.areaId === id);
+                return { area: JSON.parse(JSON.stringify(area)), seats: JSON.parse(JSON.stringify(seats)) };
+            });
+        }
+
+        function cutToClipboard() {
+            if (AppState.selectedAreaIds.length === 0) return;
+            saveStateToHistory();
+            copyToClipboard();
+            AppState.areas = AppState.areas.filter(a => !AppState.selectedAreaIds.includes(a.id));
+            AppState.seats = AppState.seats.filter(s => !AppState.selectedAreaIds.includes(s.areaId));
+            AppState.selectedAreaIds = [];
+            updateActiveGroup();
+            renderMap();
+            updateUI();
+        }
+
+        function pasteFromClipboard() {
+            if (!AppState.areaClipboard || AppState.areaClipboard.length === 0) return;
+            saveStateToHistory();
+            const newSelection = [];
+            
+            AppState.areaClipboard.forEach(item => {
+                AppState.areaCounter++;
+                const newAreaId = `temp-area-${AppState.areaCounter}`;
+                const newArea = JSON.parse(JSON.stringify(item.area));
+                newArea.id = newAreaId;
+                newArea.title = `${newArea.title} (Copia)`;
+                delete newArea.groupId; 
+                
+                newArea.points = newArea.points.map(p => ({ x: p.x + 20, y: p.y + 20 }));
+                
+                AppState.areas.push(newArea);
+                newSelection.push(newAreaId);
+
+                item.seats.forEach(seat => {
+                    AppState.seatCounter++;
+                    const newSeat = JSON.parse(JSON.stringify(seat));
+                    newSeat.seatId = `temp-seat-${AppState.seatCounter}`;
+                    newSeat.areaId = newAreaId; 
+                    AppState.seats.push(newSeat);
+                });
+            });
+            
+            AppState.selectedAreaIds = newSelection;
+            updateActiveGroup();
+            renderMap();
+            updateUI();
+        }
+
+        // --- Atajos de Teclado (Event Listener) ---
+        document.addEventListener('keydown', (e) => {
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+
+            if (AppState.curveAlignment && AppState.curveAlignment.active) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    applyCurveAlignment();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelCurveAlignment();
+                }
+                return;
+            }
+
+            if (e.ctrlKey || e.metaKey) {
+                switch(e.key.toLowerCase()) {
+                    case 'c':
+                        e.preventDefault();
+                        copyToClipboard();
+                        break;
+                    case 'x':
+                        e.preventDefault();
+                        cutToClipboard();
+                        break;
+                    case 'v':
+                        e.preventDefault();
+                        pasteFromClipboard();
+                        break;
+                    case 'z':
+                        e.preventDefault();
+                        undo();
+                        break;
+                }
+            }
+        });
 
         // --- 2. Utils ---
         function getMousePos(evt) {
@@ -468,7 +882,7 @@
             return { fill: `hsl(${hue}, 60%, 88%)`, stroke: `hsl(${hue}, 50%, 45%)` };
         }
 
-        // --- 3. Funciones Portapapeles ---
+        // --- 3. Funciones Portapapeles (Siluetas) ---
         function copySelectedShape() {
             if (AppState.selectedAreaIds.length === 0) return;
             const areaId = AppState.selectedAreaIds[AppState.selectedAreaIds.length - 1];
@@ -485,6 +899,7 @@
 
         function pasteShapeToSelected() {
             if (!AppState.shapeClipboard || AppState.selectedAreaIds.length === 0) return;
+            saveStateToHistory(); 
             AppState.selectedAreaIds.forEach(id => {
                 const area = AppState.areas.find(a => a.id === id);
                 if (area) {
@@ -539,6 +954,7 @@
         document.getElementById('csvInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
+            saveStateToHistory(); 
             const reader = new FileReader();
             reader.onload = (evt) => processImportedData(parseCSV(evt.target.result));
             reader.readAsText(file);
@@ -547,6 +963,7 @@
         document.getElementById('bgInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file) {
+                saveStateToHistory();
                 const url = URL.createObjectURL(file);
                 const tempImg = new Image();
                 tempImg.src = url;
@@ -565,8 +982,9 @@
         });
 
         function processImportedData(data) {
-            AppState.seats = []; AppState.sectors = []; AppState.areas = [];
-            AppState.selectedAreaIds = []; AppState.selectedSectorId = null;
+            AppState.seats = []; AppState.sectors = []; AppState.areas = []; AppState.groups = {};
+            AppState.selectedAreaIds = []; AppState.selectedSectorId = null; AppState.activeGroupId = null;
+            AppState.isolatedAreaId = null;
             AppState.expandedSectors.clear(); 
 
             data.sort((a, b) => {
@@ -588,6 +1006,8 @@
                 const rowPos = parseInt(row['ROW POSITION']) || 1;
                 const seatPos = parseInt(row['SEAT POSITION']) || 1;
                 const savedShape = row['AREA SHAPE'];
+                const groupId = row['GROUP ID'];
+                const groupData = row['GROUP DATA'];
 
                 if (!sectorsMap.has(secId)) {
                     const newSector = { id: secId, title: secTitle };
@@ -605,12 +1025,17 @@
                         points: restoredPoints || [],
                         rowLabelOffset: 0
                     };
+                    if (groupId) area.groupId = groupId;
                     AppState.areas.push(area);
                 } else {
                     area.rowMin = Math.min(area.rowMin, rowPos);
                     area.rowMax = Math.max(area.rowMax, rowPos);
                     area.seatMin = Math.min(area.seatMin, seatPos);
                     area.seatMax = Math.max(area.seatMax, seatPos);
+                }
+                
+                if (groupId && groupData && !AppState.groups[groupId]) {
+                    try { AppState.groups[groupId] = JSON.parse(groupData); } catch(e) {}
                 }
 
                 AppState.seats.push({
@@ -623,14 +1048,34 @@
             AppState.sectors.sort((a,b) => a.title.localeCompare(b.title));
             AppState.sectors.forEach(sector => {
                 let currentX = startX;
+                let maxSectorHeight = 50; 
+
                 const sectorAreas = AppState.areas.filter(a => a.sectorId === sector.id).sort((a,b) => a.title.localeCompare(b.title));
                 sectorAreas.forEach(area => {
                     if (area.points.length === 0) {
-                        area.points = [{x: currentX, y: currentY}, {x: currentX + 160, y: currentY}, {x: currentX + 160, y: currentY + 100}, {x: currentX, y: currentY + 100}];
-                        currentX += 170;
+                        const cols = Math.max(1, area.seatMax - area.seatMin + 1);
+                        const rows = Math.max(1, area.rowMax - area.rowMin + 1);
+                        const targetWidth = cols * GRID_STEP;
+                        const targetHeight = rows * GRID_STEP;
+
+                        area.points = [
+                            {x: currentX, y: currentY}, 
+                            {x: currentX + targetWidth, y: currentY}, 
+                            {x: currentX + targetWidth, y: currentY + targetHeight}, 
+                            {x: currentX, y: currentY + targetHeight}
+                        ];
+                        
+                        currentX += targetWidth + 20;
+                        maxSectorHeight = Math.max(maxSectorHeight, targetHeight);
+                    } else {
+                        const bounds = getBounds(area.points);
+                        maxSectorHeight = Math.max(maxSectorHeight, bounds.height);
                     }
                 });
-                if (sectorAreas.length > 0) currentY += 180;
+                
+                if (sectorAreas.length > 0) {
+                    currentY += maxSectorHeight + 80; 
+                }
             });
 
             renderMap(); renderTreeList(); updateUI(); resetZoom();
@@ -638,7 +1083,7 @@
 
         // --- Export ---
         function exportData() {
-            const headers = ['SECTOR ID','SECTOR TITLE','AREA ID','AREA TITLE','AREA CODE','SEAT ID','ROW POSITION','SEAT POSITION','ROW NUMBER','SEAT NUMBER', 'AREA POSITION', 'AREA SHAPE'];
+            const headers = ['SECTOR ID','SECTOR TITLE','AREA ID','AREA TITLE','AREA CODE','SEAT ID','ROW POSITION','SEAT POSITION','ROW NUMBER','SEAT NUMBER', 'AREA POSITION', 'AREA SHAPE', 'GROUP ID', 'GROUP DATA'];
             let csvContent = headers.join(',') + "\n";
             const escape = (val) => {
                 if (val === null || val === undefined) return '';
@@ -652,10 +1097,14 @@
                 areaSeats.forEach(seat => {
                     const posStr = `${Math.round(area.points[0].x)},${Math.round(area.points[0].y)}`;
                     const shapeStr = JSON.stringify(area.points);
+                    const grpId = area.groupId || '';
+                    const grpDataStr = grpId && AppState.groups[grpId] ? JSON.stringify(AppState.groups[grpId]) : '';
+                    
                     csvContent += [
                         escape(parentSector?.id || seat.sectorId), escape(parentSector?.title || seat.sectorTitle),
                         escape(seat.areaId), escape(area.title), escape(area.code),
-                        escape(seat.seatId), seat.rowPos, seat.seatPos, escape(seat.rowNum), escape(seat.seatNum), escape(posStr), escape(shapeStr)
+                        escape(seat.seatId), seat.rowPos, seat.seatPos, escape(seat.rowNum), escape(seat.seatNum), 
+                        escape(posStr), escape(shapeStr), escape(grpId), escape(grpDataStr)
                     ].join(',') + "\n";
                 });
             });
@@ -689,10 +1138,14 @@
                 img.setAttribute("width", AppState.background.w); 
                 img.setAttribute("height", AppState.background.h);
                 
-                if (!AppState.background.locked) {
+                img.setAttribute("draggable", "false");
+                img.style.userSelect = "none";
+                
+                const isDrawingCurve = AppState.curveAlignment && AppState.curveAlignment.active;
+                
+                if (!AppState.background.locked && !isDrawingCurve) {
                     img.addEventListener('mousedown', startMoveBackground);
                     
-                    // Solo mostramos el marco y tiradores si está seleccionado
                     if (AppState.background.selected) {
                         const frame = document.createElementNS("http://www.w3.org/2000/svg", "rect");
                         frame.setAttribute("x", AppState.background.x);
@@ -702,7 +1155,6 @@
                         frame.setAttribute("class", "bg-image-frame");
                         bgLayer.appendChild(frame);
 
-                        // 4 Tiradores para redimensionar
                         const handles = [
                             { class: 'nw', x: AppState.background.x, y: AppState.background.y },
                             { class: 'ne', x: AppState.background.x + AppState.background.w, y: AppState.background.y },
@@ -721,6 +1173,8 @@
                             bgLayer.appendChild(rect);
                         });
                     }
+                } else {
+                    img.style.pointerEvents = "none";
                 }
                 
                 bgLayer.appendChild(img);
@@ -732,6 +1186,8 @@
             sortedAreas.forEach(area => {
                 const isSelected = AppState.selectedAreaIds.includes(area.id);
                 const isActive = AppState.selectedAreaIds[AppState.selectedAreaIds.length - 1] === area.id;
+                const isIsolated = AppState.isolatedAreaId === area.id;
+                
                 const colors = getSectorColor(AppState.sectors.findIndex(s => s.id === area.sectorId));
 
                 if (AppState.showSeatsInMap) {
@@ -745,14 +1201,39 @@
                 }
 
                 const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-                g.classList.toggle("single-selected-group", isActive);
+                // Si el área está aislada o es individual, le ponemos los controles nativos completos (single-selected-group)
+                g.classList.toggle("single-selected-group", isActive && (!area.groupId || isIsolated));
                 
                 const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
                 poly.setAttribute("points", area.points.map(p => `${p.x},${p.y}`).join(" "));
                 poly.setAttribute("style", `fill: ${colors.fill}; stroke: ${colors.stroke};`);
-                poly.className.baseVal = `area-polygon ${isSelected ? (AppState.selectedAreaIds.length > 1 ? "multi-selected" : "selected") : ""}`;
-                poly.addEventListener('mousedown', (e) => startMoveArea(e, area));
-                poly.addEventListener('dblclick', (e) => { e.stopPropagation(); openSeatEditor(); });
+                poly.className.baseVal = `area-polygon ${isSelected ? (AppState.selectedAreaIds.length > 1 && !isIsolated ? "multi-selected" : "selected") : ""}`;
+                
+                poly.addEventListener('mousedown', (e) => {
+                    if (AppState.curveAlignment && AppState.curveAlignment.active) return;
+                    startMoveArea(e, area);
+                });
+                poly.addEventListener('dblclick', (e) => { 
+                    if (AppState.curveAlignment && AppState.curveAlignment.active) return;
+                    e.stopPropagation(); 
+                    
+                    if (area.groupId && AppState.isolatedAreaId !== area.id) {
+                        // Primer doble clic: Aislar el área del grupo
+                        AppState.isolatedAreaId = area.id;
+                        AppState.selectedAreaIds = [area.id];
+                        updateActiveGroup();
+                        updateUI();
+                        renderMap();
+                    } else {
+                        // Segundo doble clic (o área no agrupada): Abrir editor de asientos
+                        AppState.isolatedAreaId = area.id;
+                        AppState.selectedAreaIds = [area.id];
+                        updateActiveGroup();
+                        updateUI();
+                        renderMap();
+                        openSeatEditor(); 
+                    }
+                });
                 g.appendChild(poly);
 
                 if (AppState.showSeatsInMap) {
@@ -785,7 +1266,6 @@
                 txt.className.baseVal = "area-label"; txt.textContent = area.code;
                 g.appendChild(txt);
 
-                // Flecha roja de frente
                 const p3l = area.points[2], p4l = area.points[3];
                 const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
                 line.setAttribute("class", "front-edge"); line.setAttribute("x1", p4l.x); line.setAttribute("y1", p4l.y); line.setAttribute("x2", p3l.x); line.setAttribute("y2", p3l.y);
@@ -802,7 +1282,8 @@
                 arrow.setAttribute("marker-end", "url(#arrowhead)"); 
                 g.appendChild(arrow);
 
-                if (isActive) {
+                // Tiradores individuales si no está en modo curva global Y (no está agrupada O está aislada explícitamente)
+                if (isActive && (!AppState.curveAlignment || !AppState.curveAlignment.active) && (!AppState.activeGroupId || isIsolated)) {
                     area.points.forEach((p, i) => {
                         const ch = document.createElementNS("http://www.w3.org/2000/svg", "circle");
                         ch.setAttribute("cx", p.x); ch.setAttribute("cy", p.y); ch.setAttribute("r", 5);
@@ -833,7 +1314,8 @@
                 areasLayer.appendChild(g);
             });
 
-            if (AppState.selectedAreaIds.length > 1) {
+            // Controles especiales para multi-selección que NO son grupos creados
+            if (AppState.selectedAreaIds.length > 1 && (!AppState.curveAlignment || !AppState.curveAlignment.active) && !AppState.activeGroupId) {
                 const groupBounds = getSelectionBounds();
                 if (groupBounds) {
                     const gx = groupBounds.centerX;
@@ -856,6 +1338,61 @@
                     rc.className.baseVal = "group-rotate-handle";
                     rc.addEventListener('mousedown', (e) => startRotateArea(e, null));
                     controlsLayer.appendChild(rc);
+                }
+            }
+
+            // CONTROLES DE LA CURVA (Temporal o Existente)
+            const activeCurve = (AppState.curveAlignment && AppState.curveAlignment.active) ? AppState.curveAlignment : (AppState.activeGroupId ? AppState.groups[AppState.activeGroupId] : null);
+            
+            if (activeCurve && activeCurve.p0 && activeCurve.p2 && !AppState.isolatedAreaId) {
+                const { p0, p1, p2 } = activeCurve;
+                
+                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                path.setAttribute("d", `M ${p0.x} ${p0.y} Q ${p1.x} ${p1.y} ${p2.x} ${p2.y}`);
+                path.setAttribute("stroke", "#9333ea"); 
+                path.setAttribute("stroke-width", Math.max(2, 4 / AppState.zoom));
+                path.setAttribute("fill", "none");
+                path.setAttribute("stroke-dasharray", "8,8");
+                controlsLayer.appendChild(path);
+
+                if ((AppState.curveAlignment && AppState.curveAlignment.step === 2) || AppState.activeGroupId) {
+                    [p0, p2].forEach(pt => {
+                        const ptCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                        ptCircle.setAttribute("cx", pt.x);
+                        ptCircle.setAttribute("cy", pt.y);
+                        ptCircle.setAttribute("r", Math.max(3, 4 / AppState.zoom));
+                        ptCircle.setAttribute("fill", "#9333ea");
+                        controlsLayer.appendChild(ptCircle);
+                    });
+
+                    const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    handle.setAttribute("cx", p1.x);
+                    handle.setAttribute("cy", p1.y);
+                    handle.setAttribute("r", Math.max(6, 8 / AppState.zoom));
+                    handle.setAttribute("fill", "white");
+                    handle.setAttribute("stroke", "#9333ea");
+                    handle.setAttribute("stroke-width", Math.max(2, 3 / AppState.zoom));
+                    handle.style.cursor = "grab";
+                    
+                    const handleHitbox = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                    handleHitbox.setAttribute("cx", p1.x);
+                    handleHitbox.setAttribute("cy", p1.y);
+                    handleHitbox.setAttribute("r", Math.max(20, 25 / AppState.zoom));
+                    handleHitbox.setAttribute("fill", "transparent");
+                    handleHitbox.style.cursor = "grab";
+                    
+                    const startDragCurve = (e) => {
+                        e.stopPropagation();
+                        e.preventDefault(); 
+                        saveStateToHistory();
+                        AppState.interactionMode = AppState.activeGroupId ? 'drag_existing_curve_control' : 'drag_curve_control';
+                    };
+
+                    handle.addEventListener('mousedown', startDragCurve);
+                    handleHitbox.addEventListener('mousedown', startDragCurve);
+                    
+                    controlsLayer.appendChild(handle);
+                    controlsLayer.appendChild(handleHitbox);
                 }
             }
         }
@@ -913,6 +1450,7 @@
         }
 
         function createNewSector() {
+            saveStateToHistory();
             AppState.sectorCounter++;
             const tempId = `temp-sec-${AppState.sectorCounter}`;
             const tempTitle = `Nuevo Sector ${AppState.sectorCounter}`;
@@ -923,6 +1461,7 @@
         }
 
         function createNewArea() {
+            saveStateToHistory();
             const targetSectorId = AppState.selectedSectorId || AppState.sectors[0]?.id || 'default-sec';
             if (AppState.sectors.length === 0) {
                 const defId = 'default-sec';
@@ -937,7 +1476,7 @@
             const startY = (rect.height/2 - AppState.panY) / AppState.zoom + offset;
             AppState.areas.push({ 
                 id: newId, title: `Nueva Área ${AppState.areaCounter}`, code: `A${AppState.areaCounter}`, sectorId: targetSectorId, 
-                points: [{x:startX,y:startY},{x:startX+160,y:startY},{x:startX+160,y:startY+100},{x:startX,y:startY+100}], 
+                points: [{x:startX,y:startY},{x:startX+100,y:startY},{x:startX+100,y:startY+50},{x:startX,y:startY+50}], 
                 rowMin: 1, rowMax: 5, seatMin: 1, seatMax: 10, rowLabelOffset: 0
             });
             AppState.expandedSectors.add(targetSectorId); 
@@ -949,22 +1488,58 @@
         // --- 7. Eventos de Mouse ---
         function startMoveArea(e, area) {
             e.stopPropagation();
-            if (!AppState.selectedAreaIds.includes(area.id)) {
-                if (!e.shiftKey && !e.ctrlKey) toggleSelection(area.id, false);
-                else toggleSelection(area.id, true);
+            e.preventDefault();
+            saveStateToHistory();
+            
+            // Lógica de Selección de Grupos o Aislamiento
+            if (area.groupId && !e.ctrlKey && !e.shiftKey && AppState.isolatedAreaId !== area.id) {
+                const groupAreaIds = AppState.areas.filter(a => a.groupId === area.groupId).map(a => a.id);
+                // Seleccionar todo el grupo
+                if (!AppState.selectedAreaIds.includes(area.id) || AppState.selectedAreaIds.length !== groupAreaIds.length) {
+                    AppState.selectedAreaIds = groupAreaIds;
+                    AppState.isolatedAreaId = null; 
+                }
+            } else {
+                if (!AppState.selectedAreaIds.includes(area.id)) {
+                    if (!e.shiftKey && !e.ctrlKey) {
+                        AppState.selectedAreaIds = [area.id];
+                        AppState.isolatedAreaId = null;
+                    } else {
+                        AppState.selectedAreaIds.push(area.id);
+                    }
+                }
             }
+            
+            updateActiveGroup();
+
             AppState.interactionMode = 'move_area'; 
             AppState.initialClickPoint = getMousePos(e);
             AppState.initialPointsMap = {};
+            AppState.initialGroupOriginalPoints = {};
+            
             AppState.selectedAreaIds.forEach(id => { 
                 const a = AppState.areas.find(ar => ar.id === id); 
-                if(a) AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points)); 
+                if(a) {
+                    AppState.initialPointsMap[id] = JSON.parse(JSON.stringify(a.points)); 
+                    if (a.groupId && AppState.groups[a.groupId] && AppState.groups[a.groupId].originalPointsMap[id]) {
+                        AppState.initialGroupOriginalPoints[id] = JSON.parse(JSON.stringify(AppState.groups[a.groupId].originalPointsMap[id]));
+                    }
+                }
             });
+
+            if (AppState.activeGroupId && AppState.groups[AppState.activeGroupId]) {
+                AppState.initialGroupData = JSON.parse(JSON.stringify(AppState.groups[AppState.activeGroupId]));
+            } else {
+                AppState.initialGroupData = null;
+            }
+
             renderMap(); updateUI();
         }
 
         function startMoveCorner(e, area, idx) {
             e.stopPropagation();
+            e.preventDefault();
+            saveStateToHistory();
             AppState.interactionMode = 'move_corner'; 
             AppState.activeAreaId = area.id; 
             AppState.activeCornerIndex = idx;
@@ -978,6 +1553,8 @@
 
         function startMoveEdge(e, area, edgeIdx) {
             e.stopPropagation();
+            e.preventDefault();
+            saveStateToHistory();
             AppState.interactionMode = 'move_edge'; 
             AppState.activeAreaId = area.id; 
             AppState.activeEdgeIndex = edgeIdx;
@@ -991,6 +1568,8 @@
 
         function startRotateArea(e, area) {
             e.stopPropagation();
+            e.preventDefault();
+            saveStateToHistory();
             AppState.interactionMode = 'rotate_area'; 
             AppState.activeAreaId = area ? area.id : null;
             if (area && AppState.selectedAreaIds.length <= 1) {
@@ -1009,11 +1588,16 @@
         }
 
         function startMoveBackground(e) {
+            if (AppState.curveAlignment && AppState.curveAlignment.active) return;
             e.stopPropagation(); 
+            e.preventDefault(); 
+            saveStateToHistory();
             AppState.interactionMode = 'move_bg';
             AppState.background.selected = true;
             AppState.selectedAreaIds = [];
             AppState.selectedSectorId = null;
+            AppState.activeGroupId = null;
+            AppState.isolatedAreaId = null;
             AppState.initialClickPoint = getMousePos(e); 
             AppState.initialBgRect = {x: AppState.background.x, y: AppState.background.y, w: AppState.background.w, h: AppState.background.h};
             updateUI();
@@ -1021,14 +1605,19 @@
         }
 
         function startResizeBackground(e, type) {
+            if (AppState.curveAlignment && AppState.curveAlignment.active) return;
             e.stopPropagation();
+            e.preventDefault();
+            saveStateToHistory();
             AppState.interactionMode = 'resize_bg';
-            AppState.activeEdgeIndex = type; // Usamos esto para el tipo de esquina
+            AppState.activeEdgeIndex = type; 
+            AppState.isolatedAreaId = null;
             AppState.initialClickPoint = getMousePos(e);
             AppState.initialBgRect = {x: AppState.background.x, y: AppState.background.y, w: AppState.background.w, h: AppState.background.h};
         }
 
         function updateBgFromForm() {
+            saveStateToHistory();
             AppState.background.x = parseFloat(document.getElementById('prop-bg-x').value) || 0;
             AppState.background.y = parseFloat(document.getElementById('prop-bg-y').value) || 0;
             AppState.background.w = parseFloat(document.getElementById('prop-bg-w').value) || 10;
@@ -1037,6 +1626,7 @@
         }
 
         function toggleBgLock() {
+            saveStateToHistory();
             AppState.background.locked = !AppState.background.locked;
             if (AppState.background.locked) AppState.background.selected = false;
             const icon = document.getElementById('bg-lock-icon');
@@ -1053,8 +1643,22 @@
             if (AppState.interactionMode === 'move_area') {
                 AppState.selectedAreaIds.forEach(id => { 
                     const a = AppState.areas.find(ar => ar.id === id); 
-                    if(a && AppState.initialPointsMap[id]) a.points = AppState.initialPointsMap[id].map(p => ({x: p.x+dx, y: p.y+dy})); 
+                    if(a && AppState.initialPointsMap[id]) {
+                        a.points = AppState.initialPointsMap[id].map(p => ({x: p.x+dx, y: p.y+dy})); 
+                    } 
                 });
+                
+                if (AppState.activeGroupId && AppState.initialGroupData) {
+                    const grp = AppState.groups[AppState.activeGroupId];
+                    const igrp = AppState.initialGroupData;
+                    grp.p0 = { x: igrp.p0.x + dx, y: igrp.p0.y + dy };
+                    grp.p1 = { x: igrp.p1.x + dx, y: igrp.p1.y + dy };
+                    grp.p2 = { x: igrp.p2.x + dx, y: igrp.p2.y + dy };
+                    
+                    Object.keys(igrp.originalPointsMap).forEach(id => {
+                        grp.originalPointsMap[id] = igrp.originalPointsMap[id].map(p => ({ x: p.x + dx, y: p.y + dy }));
+                    });
+                }
             } else if (AppState.interactionMode === 'move_corner') {
                 AppState.selectedAreaIds.forEach(id => {
                     const a = AppState.areas.find(ar => ar.id === id);
@@ -1134,21 +1738,83 @@
                 });
                 AppState.selectedAreaIds = Array.from(new Set([...AppState.boxSelectInitialSelection, ...intersectingIds]));
             }
+            // Controladores de la interacción "Curvar"
+            else if (AppState.interactionMode === 'dragging_curve_base') {
+                const cm = getMousePos(e);
+                AppState.curveAlignment.p2 = cm;
+                AppState.curveAlignment.p1 = {
+                    x: (AppState.curveAlignment.p0.x + cm.x) / 2,
+                    y: (AppState.curveAlignment.p0.y + cm.y) / 2
+                };
+            }
+            else if (AppState.interactionMode === 'drag_curve_control') {
+                AppState.curveAlignment.p1 = getMousePos(e);
+                const intensity = calculateCurveIntensity();
+                document.getElementById('curve-intensity-input').value = intensity;
+                previewCurveAlignment();
+            }
+            else if (AppState.interactionMode === 'drag_existing_curve_control') {
+                const grp = AppState.groups[AppState.activeGroupId];
+                grp.p1 = getMousePos(e);
+                
+                const intensity = getCurveIntensity(grp.p0, grp.p1, grp.p2);
+                const input = document.getElementById('prop-group-intensity');
+                if (input) input.value = intensity;
+                
+                executeCurveTransform(grp.p0, grp.p1, grp.p2, grp.orderedIds, grp.originalPointsMap);
+            }
+            
             renderMap();
             if (AppState.background.selected) populateBgForm();
-            if (AppState.selectedAreaIds.length === 1) populateAreaForm();
+            if (AppState.selectedAreaIds.length === 1 && !AppState.activeGroupId) populateAreaForm();
         });
 
         document.addEventListener('mouseup', () => {
+            // Guardar modificaciones manuales de áreas aisladas dentro del mapa original del grupo
+            if (['move_area', 'move_corner', 'move_edge', 'rotate_area'].includes(AppState.interactionMode)) {
+                if (!AppState.activeGroupId) { 
+                    AppState.selectedAreaIds.forEach(id => {
+                        const a = AppState.areas.find(ar => ar.id === id);
+                        if (a && a.groupId && AppState.groups[a.groupId]) {
+                            AppState.groups[a.groupId].originalPointsMap[a.id] = JSON.parse(JSON.stringify(a.points));
+                        }
+                    });
+                }
+            }
+
             if (AppState.interactionMode === 'box_select') {
                 document.getElementById('selection-marquee').classList.remove('active');
+                updateActiveGroup();
                 updateUI();
+            } else if (AppState.interactionMode === 'dragging_curve_base') {
+                AppState.curveAlignment.step = 2;
+                AppState.interactionMode = null; 
+                determineCurveOrder();
+                previewCurveAlignment();
+                updateUI();
+                renderMap();
+            } else if (AppState.interactionMode === 'drag_curve_control' || AppState.interactionMode === 'drag_existing_curve_control') {
+                AppState.interactionMode = null;
             }
-            AppState.interactionMode = null;
+            
+            if (AppState.interactionMode && !['drag_curve_control', 'drag_existing_curve_control', 'dragging_curve_base'].includes(AppState.interactionMode)) {
+                AppState.interactionMode = null;
+            }
         });
 
         const viewportMain = document.getElementById('main-viewport');
         viewportMain.addEventListener('mousedown', (e) => {
+            if (AppState.curveAlignment && AppState.curveAlignment.active) {
+                if (AppState.curveAlignment.step === 1) {
+                    AppState.interactionMode = 'dragging_curve_base';
+                    const m = getMousePos(e);
+                    AppState.curveAlignment.p0 = m;
+                    AppState.curveAlignment.p1 = m;
+                    AppState.curveAlignment.p2 = m;
+                    return; 
+                }
+            }
+
             if (e.target.id === 'main-viewport' || e.target.id === 'map-svg') {
                 const isBoxSelect = e.ctrlKey || e.metaKey;
                 if (isBoxSelect) {
@@ -1158,11 +1824,16 @@
                 } else {
                     AppState.isDraggingMap = true; 
                     AppState.dragStart = {x: e.clientX, y: e.clientY};
-                    AppState.selectedAreaIds = []; 
-                    AppState.selectedSectorId = null; 
-                    AppState.background.selected = false;
-                    updateUI(); 
-                    renderMap();
+                    
+                    if (!AppState.curveAlignment || !AppState.curveAlignment.active) {
+                        AppState.selectedAreaIds = []; 
+                        AppState.selectedSectorId = null; 
+                        AppState.activeGroupId = null;
+                        AppState.isolatedAreaId = null; // Limpiar aislamiento
+                        AppState.background.selected = false;
+                        updateUI(); 
+                        renderMap();
+                    }
                 }
             }
         });
@@ -1174,6 +1845,31 @@
             }
         });
         document.addEventListener('mouseup', () => AppState.isDraggingMap = false);
+
+        // --- RUEDA DEL RATÓN (ZOOM INTELIGENTE) ---
+        viewportMain.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = viewportMain.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Convertir coordenadas del ratón a espacio del mundo (antes del zoom)
+            const worldX = (mouseX - AppState.panX) / AppState.zoom;
+            const worldY = (mouseY - AppState.panY) / AppState.zoom;
+
+            // Calcular nuevo zoom
+            const zoomDelta = e.deltaY < 0 ? 0.1 : -0.1;
+            let newZoom = AppState.zoom + zoomDelta;
+            newZoom = Math.max(0.1, Math.min(5, newZoom)); // Limites min/max
+            
+            if (newZoom !== AppState.zoom) {
+                // Ajustar el paneo para que el zoom vaya "hacia" donde está el ratón
+                AppState.panX = mouseX - worldX * newZoom;
+                AppState.panY = mouseY - worldY * newZoom;
+                AppState.zoom = newZoom;
+                updateTransform();
+            }
+        }, { passive: false });
 
         function resetZoom() { AppState.zoom = 1; AppState.panX = 0; AppState.panY = 0; updateTransform(); }
         function adjustZoom(d) { 
@@ -1188,6 +1884,8 @@
         function selectSector(id) { 
             AppState.selectedSectorId = id; 
             AppState.selectedAreaIds = []; 
+            AppState.activeGroupId = null;
+            AppState.isolatedAreaId = null;
             AppState.background.selected = false;
             updateUI(); 
         }
@@ -1201,39 +1899,95 @@
             }
             AppState.selectedSectorId = null;
             AppState.background.selected = false;
+            AppState.isolatedAreaId = null; 
+            updateActiveGroup();
             updateUI();
         }
 
         function toggleShowSeats() {
             AppState.showSeatsInMap = !AppState.showSeatsInMap;
             const btn = document.getElementById('toggle-seats-btn');
-            btn.classList.toggle('bg-blue-600', AppState.showSeatsInMap);
-            btn.classList.toggle('text-white', AppState.showSeatsInMap);
+            const span = btn.querySelector('span');
+            
+            if (AppState.showSeatsInMap) {
+                span.innerText = 'Ocultar Asientos';
+                btn.classList.remove('bg-white', 'text-gray-700', 'border-gray-300', 'hover:bg-gray-50');
+                btn.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'hover:bg-blue-700');
+            } else {
+                span.innerText = 'Ver Asientos';
+                btn.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'hover:bg-blue-700');
+                btn.classList.add('bg-white', 'text-gray-700', 'border-gray-300', 'hover:bg-gray-50');
+            }
+            
             renderMap();
         }
 
         function updateUI() {
             renderTreeList();
-            const areaForm = document.getElementById('area-form'), sectorForm = document.getElementById('sector-form'), noSel = document.getElementById('no-selection'), multi = document.getElementById('multi-selection-info'), bg = document.getElementById('bg-edit-info');
-            [areaForm, sectorForm, noSel, multi, bg].forEach(el => el.classList.add('hidden'));
+            const areaForm = document.getElementById('area-form'), 
+                  sectorForm = document.getElementById('sector-form'), 
+                  noSel = document.getElementById('no-selection'), 
+                  multi = document.getElementById('multi-selection-info'), 
+                  bg = document.getElementById('bg-edit-info'),
+                  groupForm = document.getElementById('group-form');
+                  
+            [areaForm, sectorForm, noSel, multi, bg, groupForm].forEach(el => el.classList.add('hidden'));
             
+            // UI Banner de Curva Temporal
+            const curveBanner = document.getElementById('curve-banner');
+            const btnCurveAlign = document.getElementById('btn-curve-align');
+            const intensityContainer = document.getElementById('curve-intensity-container');
+            
+            if (AppState.curveAlignment && AppState.curveAlignment.active) {
+                curveBanner.classList.remove('hidden');
+                if (AppState.curveAlignment.step === 1) {
+                    document.getElementById('curve-msg').innerText = "Paso 1: Haz clic y arrastra en el mapa para dibujar la línea base de la curva.";
+                    document.getElementById('curve-apply').classList.add('hidden');
+                    intensityContainer.classList.add('hidden');
+                } else {
+                    document.getElementById('curve-msg').innerText = "Paso 2: Arrastra el punto central o ajusta el valor numérico.";
+                    document.getElementById('curve-apply').classList.remove('hidden');
+                    intensityContainer.classList.remove('hidden');
+                    document.getElementById('curve-intensity-input').value = calculateCurveIntensity();
+                }
+            } else {
+                curveBanner.classList.add('hidden');
+                intensityContainer.classList.add('hidden');
+            }
+
+            // Lógica de Paneles Laterales
             if (!AppState.background.locked && AppState.background.selected && AppState.background.url) {
                 bg.classList.remove('hidden');
                 populateBgForm();
+            } else if (AppState.activeGroupId && AppState.groups[AppState.activeGroupId]) {
+                // UI de GRUPO CURVO EXISTENTE
+                groupForm.classList.remove('hidden');
+                document.getElementById('prop-group-intensity').value = getCurveIntensity(
+                    AppState.groups[AppState.activeGroupId].p0,
+                    AppState.groups[AppState.activeGroupId].p1,
+                    AppState.groups[AppState.activeGroupId].p2
+                );
+                document.getElementById('clipboard-tools').classList.remove('hidden');
+                btnCurveAlign.classList.add('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
             } else if (AppState.selectedAreaIds.length === 1) {
                 areaForm.classList.remove('hidden'); 
                 populateAreaForm(); 
                 document.getElementById('clipboard-tools').classList.remove('hidden');
+                btnCurveAlign.classList.add('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
             } else if (AppState.selectedAreaIds.length > 1) {
                 multi.classList.remove('hidden'); 
                 document.getElementById('multi-count').innerText = AppState.selectedAreaIds.length; 
                 document.getElementById('clipboard-tools').classList.remove('hidden');
+                btnCurveAlign.classList.remove('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
             } else if (AppState.selectedSectorId) {
                 sectorForm.classList.remove('hidden'); 
                 populateSectorForm(); 
+                btnCurveAlign.classList.add('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
             } else {
                 noSel.classList.remove('hidden');
+                btnCurveAlign.classList.add('opacity-50', 'cursor-not-allowed', 'pointer-events-none');
             }
+            
             const btnP = document.getElementById('btn-paste-shape');
             btnP.disabled = !AppState.shapeClipboard; btnP.classList.toggle('opacity-50', !AppState.shapeClipboard);
             lucide.createIcons();
@@ -1270,6 +2024,7 @@
         }
 
         function updateGridDimensions() {
+            saveStateToHistory();
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
             a.rowMin = parseInt(document.getElementById('modal-row-min').value);
             a.rowMax = parseInt(document.getElementById('modal-row-max').value);
@@ -1284,6 +2039,8 @@
             const newRowBase = parseInt(document.getElementById('reindex-row-base').value);
             const newSeatBase = parseInt(document.getElementById('reindex-seat-base').value);
             if (isNaN(newRowBase) || isNaN(newSeatBase)) return;
+            
+            saveStateToHistory();
             const rowOffsetDelta = newRowBase - area.rowMin;
             const seatOffsetDelta = newSeatBase - area.seatMin;
             AppState.seats.forEach(seat => {
@@ -1311,6 +2068,8 @@
             if (!area) return;
             const newLabelBase = parseInt(document.getElementById('relabel-row-base').value);
             if (isNaN(newLabelBase)) return;
+            
+            saveStateToHistory();
             const minCoordRow = area.rowMin;
             const newOffset = newLabelBase - minCoordRow;
             area.rowLabelOffset = newOffset;
@@ -1324,6 +2083,7 @@
         }
 
         function expandGrid(d) {
+            saveStateToHistory();
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(!a) return;
             if(d==='top') a.rowMax++; if(d==='bottom') a.rowMin--; if(d==='left') a.seatMin--; if(d==='right') a.seatMax++;
             document.getElementById('modal-row-min').value = a.rowMin;
@@ -1346,7 +2106,13 @@
                     const c = document.createElement('div'); 
                     c.className = `seat-cell ${active?'active':''} ${AppState.selectedSeatLoc?.r===r && AppState.selectedSeatLoc?.s===s ? 'selected-seat' : ''}`;
                     if (AppState.seatEditMode === 'paint') {
-                        c.onmousedown=()=>{ isDrawingSeats=true; drawingMode = !c.classList.contains('active'); toggleSeat(area,r,s,drawingMode); c.classList.toggle('active',drawingMode); };
+                        c.onmousedown=()=>{ 
+                            saveStateToHistory();
+                            isDrawingSeats=true; 
+                            drawingMode = !c.classList.contains('active'); 
+                            toggleSeat(area,r,s,drawingMode); 
+                            c.classList.toggle('active',drawingMode); 
+                        };
                         c.onmouseenter=()=>{ if(isDrawingSeats && c.classList.contains('active')!==drawingMode){ toggleSeat(area,r,s,drawingMode); c.classList.toggle('active',drawingMode); } };
                     } else { c.onclick = () => selectSeatInGrid(area, r, s); }
                     cont.appendChild(c);
@@ -1394,6 +2160,7 @@
         }
 
         function deleteSelectedSeat() {
+            saveStateToHistory();
             const idx = AppState.seats.findIndex(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
             if (idx !== -1) { AppState.seats.splice(idx, 1); AppState.selectedSeatLoc = null; renderSeatGrid(AppState.areas.find(a=>a.id===AppState.selectedAreaIds[0])); updateDetailPanel(); }
         }
@@ -1438,6 +2205,7 @@
         }
 
         function updateAreaDimensions() {
+            saveStateToHistory();
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]);
             if (!a) return;
             const newWidth = parseFloat(document.getElementById('prop-width').value) || 1;
@@ -1445,14 +2213,23 @@
             const bounds = getBounds(a.points);
             const scaleX = newWidth / bounds.width;
             const scaleY = newHeight / bounds.height;
+            
+            // Actualizar individual
             a.points = a.points.map(p => ({
                 x: bounds.minX + (p.x - bounds.minX) * scaleX,
                 y: bounds.minY + (p.y - bounds.minY) * scaleY
             }));
+            
+            // Actualizar mapa original si estaba en grupo
+            if (a.groupId && AppState.groups[a.groupId]) {
+                 AppState.groups[a.groupId].originalPointsMap[a.id] = a.points;
+            }
+            
             renderMap();
         }
         
         function updateSelectedAreaSector() { 
+            saveStateToHistory();
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); 
             if(a) { 
                 a.sectorId = document.getElementById('prop-sector-select').value; 
@@ -1475,13 +2252,16 @@
             if (seat) { seat.seatId = document.getElementById('detail-seat-id').value; seat.rowNum = document.getElementById('detail-row-num').value; seat.seatNum = document.getElementById('detail-seat-num').value; }
         }
         
-        function fillAllSeats() { const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a) { for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,true); renderSeatGrid(a); } }
-        function clearAllSeats() { const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a && confirm("¿Vaciar?")) { for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,false); renderSeatGrid(a); } }
+        function fillAllSeats() { saveStateToHistory(); const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a) { for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,true); renderSeatGrid(a); } }
+        function clearAllSeats() { saveStateToHistory(); const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a && confirm("¿Vaciar?")) { for(let r=a.rowMin; r<=a.rowMax; r++) for(let s=a.seatMin; s<=a.seatMax; s++) toggleSeat(a,r,s,false); renderSeatGrid(a); } }
 
         function deleteSelectedArea() {
             if(confirm("¿Eliminar área seleccionada?")) {
+                saveStateToHistory();
                 AppState.areas = AppState.areas.filter(a => !AppState.selectedAreaIds.includes(a.id));
+                AppState.seats = AppState.seats.filter(s => !AppState.selectedAreaIds.includes(s.areaId));
                 AppState.selectedAreaIds = [];
+                updateActiveGroup();
                 renderMap(); 
                 updateUI();
             }
@@ -1489,15 +2269,20 @@
 
         function deleteSelectedSector() {
             if(confirm("¿Eliminar sector y todas sus áreas asociadas?")) {
+                saveStateToHistory();
                 AppState.areas = AppState.areas.filter(a => a.sectorId !== AppState.selectedSectorId);
+                const deletedAreas = AppState.areas.filter(a => a.sectorId === AppState.selectedSectorId).map(a => a.id);
+                AppState.seats = AppState.seats.filter(s => !deletedAreas.includes(s.areaId));
                 AppState.sectors = AppState.sectors.filter(s => s.id !== AppState.selectedSectorId);
                 AppState.selectedSectorId = null;
+                updateActiveGroup();
                 renderMap(); 
                 updateUI();
             }
         }
 
         function alignSelection(type) {
+            saveStateToHistory();
             const bounds = getSelectionBounds();
             if (!bounds) return;
             AppState.selectedAreaIds.forEach(id => {
@@ -1515,6 +2300,7 @@
         }
 
         function distributeSelection(axis) {
+            saveStateToHistory();
             if (AppState.selectedAreaIds.length < 3) return;
             const areas = AppState.selectedAreaIds.map(id => AppState.areas.find(a => a.id === id)).filter(Boolean);
             const bounds = getSelectionBounds();
@@ -1542,6 +2328,58 @@
                 });
             }
             renderMap();
+        }
+
+        function ajustarTamanoArea() {
+            saveStateToHistory();
+            const area = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]);
+            if (!area) return;
+
+            const cols = area.seatMax - area.seatMin + 1;
+            const rows = area.rowMax - area.rowMin + 1;
+
+            if (cols <= 0 || rows <= 0) return;
+
+            const targetWidth = cols * GRID_STEP;
+            const targetHeight = rows * GRID_STEP;
+
+            const p0 = area.points[0]; 
+            const p1 = area.points[1]; 
+            const p3 = area.points[3]; 
+
+            const dx1 = p1.x - p0.x;
+            const dy1 = p1.y - p0.y;
+            const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+
+            const dx3 = p3.x - p0.x;
+            const dy3 = p3.y - p0.y;
+            const len3 = Math.sqrt(dx3 * dx3 + dy3 * dy3);
+
+            if (len1 === 0 || len3 === 0) return;
+
+            const ux1 = dx1 / len1;
+            const uy1 = dy1 / len1;
+            
+            const ux3 = dx3 / len3;
+            const uy3 = dy3 / len3;
+
+            const newP1 = { x: p0.x + ux1 * targetWidth, y: p0.y + uy1 * targetWidth };
+            const newP3 = { x: p0.x + ux3 * targetHeight, y: p0.y + uy3 * targetHeight };
+            
+            const newP2 = { 
+                x: newP1.x + newP3.x - p0.x, 
+                y: newP1.y + newP3.y - p0.y 
+            };
+
+            area.points = [p0, newP1, newP2, newP3];
+            
+            // Actualizar si estaba agrupada
+            if (area.groupId && AppState.groups[area.groupId]) {
+                AppState.groups[area.groupId].originalPointsMap[area.id] = area.points;
+            }
+
+            renderMap();
+            populateAreaForm();
         }
 
         updateUI(); renderMap();
