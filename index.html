@@ -151,9 +151,21 @@
             </button>
             <input type="file" id="csvInput" accept=".csv,.xlsx,.xls" class="hidden">
 
-            <button onclick="exportData()" class="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded">
-                <i data-lucide="download" class="w-4 h-4"></i> Exportar
-            </button>
+            <div class="relative" id="export-dropdown-wrapper">
+                <button onclick="document.getElementById('export-dropdown').classList.toggle('hidden')" class="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded">
+                    <i data-lucide="download" class="w-4 h-4"></i> Exportar <i data-lucide="chevron-down" class="w-3 h-3 ml-1"></i>
+                </button>
+                <div id="export-dropdown" class="hidden absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl z-50 w-64 overflow-hidden">
+                    <button onclick="exportData(); document.getElementById('export-dropdown').classList.add('hidden');" class="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 transition-colors">
+                        <div class="font-medium text-sm text-gray-800">Exportar Mapa (Editor)</div>
+                        <div class="text-xs text-gray-500 mt-0.5">CSV con posiciones, formas y grupos</div>
+                    </button>
+                    <button onclick="exportSGA(); document.getElementById('export-dropdown').classList.add('hidden');" class="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors">
+                        <div class="font-medium text-sm text-blue-700">Exportar para SGA</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Seatmanifest con IDs num&eacute;ricos secuenciales</div>
+                    </button>
+                </div>
+            </div>
         </div>
     </header>
 
@@ -282,6 +294,10 @@
                             <label class="block text-xs font-medium text-gray-500">Alto (px)</label>
                             <input type="number" id="prop-height" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" onchange="updateAreaDimensions()">
                         </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500">Puerta</label>
+                        <input type="text" id="prop-puerta" class="w-full mt-1 border-gray-300 rounded-md shadow-sm border p-1" placeholder="Ej: 13 y 14, 14 BIS..." oninput="updateSelectedAreaFromForm()">
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-500">Asignar a Sector</label>
@@ -1006,6 +1022,7 @@
                 const rowPos = parseInt(row['ROW POSITION']) || 1;
                 const seatPos = parseInt(row['SEAT POSITION']) || 1;
                 const savedShape = row['AREA SHAPE'];
+                const areaPuerta = row['PUERTA'] || '';
                 const groupId = row['GROUP ID'];
                 const groupData = row['GROUP DATA'];
 
@@ -1023,7 +1040,7 @@
                         id: areaId, title: areaTitle, code: areaCode, sectorId: secId,
                         rowMin: rowPos, rowMax: rowPos, seatMin: seatPos, seatMax: seatPos,
                         points: restoredPoints || [],
-                        rowLabelOffset: 0
+                        rowLabelOffset: 0, puerta: areaPuerta
                     };
                     if (groupId) area.groupId = groupId;
                     AppState.areas.push(area);
@@ -1083,7 +1100,7 @@
 
         // --- Export ---
         function exportData() {
-            const headers = ['SECTOR ID','SECTOR TITLE','AREA ID','AREA TITLE','AREA CODE','SEAT ID','ROW POSITION','SEAT POSITION','ROW NUMBER','SEAT NUMBER', 'AREA POSITION', 'AREA SHAPE', 'GROUP ID', 'GROUP DATA'];
+            const headers = ['SECTOR ID','SECTOR TITLE','AREA ID','AREA TITLE','AREA CODE','PUERTA','SEAT ID','ROW POSITION','SEAT POSITION','ROW NUMBER','SEAT NUMBER', 'AREA POSITION', 'AREA SHAPE', 'GROUP ID', 'GROUP DATA'];
             let csvContent = headers.join(',') + "\n";
             const escape = (val) => {
                 if (val === null || val === undefined) return '';
@@ -1102,8 +1119,8 @@
                     
                     csvContent += [
                         escape(parentSector?.id || seat.sectorId), escape(parentSector?.title || seat.sectorTitle),
-                        escape(seat.areaId), escape(area.title), escape(area.code),
-                        escape(seat.seatId), seat.rowPos, seat.seatPos, escape(seat.rowNum), escape(seat.seatNum), 
+                        escape(seat.areaId), escape(area.title), escape(area.code), escape(area.puerta || ''),
+                        escape(seat.seatId), seat.rowPos, seat.seatPos, escape(seat.rowNum), escape(seat.seatNum),
                         escape(posStr), escape(shapeStr), escape(grpId), escape(grpDataStr)
                     ].join(',') + "\n";
                 });
@@ -1112,6 +1129,76 @@
             const link = document.createElement("a");
             link.href = url; link.download = "stadium_map_export.csv"; link.click();
         }
+
+        // --- Export SGA (Seatmanifest format) ---
+        function exportSGA() {
+            const escape = (val) => {
+                if (val === null || val === undefined) return '';
+                const str = String(val);
+                if (str.includes(',') || str.includes('"') || str.includes('\n')) return `"${str.replace(/"/g, '""')}"`;
+                return str;
+            };
+
+            // Build sequential ID maps
+            const sectorIdMap = new Map();
+            let sectorCounter = 0;
+            AppState.sectors.forEach(s => {
+                sectorCounter++;
+                sectorIdMap.set(s.id, sectorCounter);
+            });
+
+            const areaIdMap = new Map();
+            let areaCounter = 0;
+            AppState.areas.forEach(a => {
+                areaCounter++;
+                areaIdMap.set(a.id, areaCounter);
+            });
+
+            const headers = ['IDZONA','ZONA','ZONA_ABREVIADO','PUERTA','IDASIENTO','POS_FILA','POS_ASIENTO','FILA','ASIENTO','SLOT','ESTADO_AVET','PATH_DESC','IDEVENT','IDGRUPOZONA','GRUPOZONA','GATES'];
+            let csvContent = headers.join(',') + "\n";
+
+            let seatCounter = 0;
+            AppState.areas.forEach(area => {
+                const areaSeats = AppState.seats.filter(s => s.areaId === area.id);
+                const parentSector = AppState.sectors.find(s => s.id === area.sectorId);
+                const numericZonaId = areaIdMap.get(area.id) || 0;
+                const numericGrupoId = sectorIdMap.get(area.sectorId) || 0;
+
+                areaSeats.forEach(seat => {
+                    seatCounter++;
+                    csvContent += [
+                        numericZonaId,
+                        escape(area.title),
+                        escape(area.code),
+                        escape(area.puerta || ''),
+                        seatCounter,
+                        seat.rowPos,
+                        seat.seatPos,
+                        escape(seat.rowNum),
+                        escape(seat.seatNum),
+                        'NULL',
+                        'L',
+                        '',
+                        0,
+                        numericGrupoId,
+                        escape(parentSector?.title || ''),
+                        escape(area.puerta || '')
+                    ].join(',') + "\n";
+                });
+            });
+
+            const url = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+            const link = document.createElement("a");
+            link.href = url; link.download = "seatmanifest_export.csv"; link.click();
+        }
+
+        // Close export dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            const wrapper = document.getElementById('export-dropdown-wrapper');
+            if (wrapper && !wrapper.contains(e.target)) {
+                document.getElementById('export-dropdown').classList.add('hidden');
+            }
+        });
 
         // --- 5. Render Map ---
         const mapContainer = document.getElementById('map-container');
@@ -1474,10 +1561,10 @@
             const offset = (AppState.areas.length % 10) * 20; 
             const startX = (rect.width/2 - AppState.panX) / AppState.zoom + offset;
             const startY = (rect.height/2 - AppState.panY) / AppState.zoom + offset;
-            AppState.areas.push({ 
-                id: newId, title: `Nueva Área ${AppState.areaCounter}`, code: `A${AppState.areaCounter}`, sectorId: targetSectorId, 
-                points: [{x:startX,y:startY},{x:startX+100,y:startY},{x:startX+100,y:startY+50},{x:startX,y:startY+50}], 
-                rowMin: 1, rowMax: 5, seatMin: 1, seatMax: 10, rowLabelOffset: 0
+            AppState.areas.push({
+                id: newId, title: `Nueva Área ${AppState.areaCounter}`, code: `A${AppState.areaCounter}`, sectorId: targetSectorId,
+                points: [{x:startX,y:startY},{x:startX+100,y:startY},{x:startX+100,y:startY+50},{x:startX,y:startY+50}],
+                rowMin: 1, rowMax: 5, seatMin: 1, seatMax: 10, rowLabelOffset: 0, puerta: ''
             });
             AppState.expandedSectors.add(targetSectorId); 
             toggleSelection(newId, false); 
@@ -2176,9 +2263,10 @@
         function populateAreaForm() {
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); 
             if (!a) return;
-            document.getElementById('prop-area-id').value = a.id; 
-            document.getElementById('prop-title').value = a.title; 
+            document.getElementById('prop-area-id').value = a.id;
+            document.getElementById('prop-title').value = a.title;
             document.getElementById('prop-code').value = a.code;
+            document.getElementById('prop-puerta').value = a.puerta || '';
             const bounds = getBounds(a.points);
             document.getElementById('prop-width').value = Math.round(bounds.width);
             document.getElementById('prop-height').value = Math.round(bounds.height);
@@ -2196,9 +2284,10 @@
         function updateSelectedAreaFromForm() { 
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); 
             if(a) { 
-                a.id = document.getElementById('prop-area-id').value; 
-                a.title = document.getElementById('prop-title').value; 
-                a.code = document.getElementById('prop-code').value; 
+                a.id = document.getElementById('prop-area-id').value;
+                a.title = document.getElementById('prop-title').value;
+                a.code = document.getElementById('prop-code').value;
+                a.puerta = document.getElementById('prop-puerta').value;
                 renderTreeList(); 
                 renderMap(); 
             } 
