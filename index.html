@@ -522,10 +522,11 @@
                 if (a) {
                     AppState.selectedAreaIds = [editingAreaId];
                     AppState.activeAreaId = editingAreaId;
+                    AppState.selectedSeatLoc = null;
+                    resetSeatDataDirty();
                     renderMap();
                     updateUI();
-                    renderSeatGrid(a);
-                    updateDetailPanel();
+                    setEditMode(AppState.seatEditMode);
                 } else {
                     AppState.selectedAreaIds = [];
                     AppState.selectedSectorId = null;
@@ -2175,8 +2176,10 @@
         function closeSeatEditor() { discardSeatEditor(); }
         function setEditMode(mode) {
             AppState.seatEditMode = mode;
+            if (mode === 'paint') { AppState.selectedSeatLoc = null; resetSeatDataDirty(); }
             ['paint','select'].forEach(m => document.getElementById(`mode-${m}`).className = m===mode ? 'px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800' : 'px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100');
-            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if(a) renderSeatGrid(a);
+            const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]);
+            if (a) { renderSeatGrid(a); updateDetailPanel(); }
         }
 
         function updateGridDimensions() {
