@@ -423,7 +423,8 @@
             <div class="p-4 border-t flex justify-end gap-2 bg-gray-50 rounded-b-lg">
                 <button onclick="fillAllSeats()" class="px-4 py-2 text-sm bg-white border border-gray-300 rounded text-gray-700 hover:bg-gray-100 transition-colors">Llenar Todo</button>
                 <button onclick="clearAllSeats()" class="px-4 py-2 text-sm bg-white border border-red-300 rounded text-red-600 hover:bg-red-50 transition-colors">Vaciar Todo</button>
-                <button onclick="closeSeatEditor()" class="px-6 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 font-medium shadow-md transition-colors">Cerrar</button>
+                <button onclick="discardSeatEditor()" class="px-6 py-2 text-sm bg-white border border-gray-300 rounded text-gray-700 hover:bg-gray-100 transition-colors">Descartar</button>
+                <button onclick="saveSeatEditor()" class="px-6 py-2 text-sm bg-green-600 text-white rounded hover:bg-green-700 font-medium shadow-md transition-colors">Guardar Cambios</button>
             </div>
         </div>
     </div>
@@ -503,7 +504,10 @@
         function undo() {
             if (AppState.history.length === 0) return;
             const prevState = AppState.history.pop();
-            
+
+            const seatModalOpen = !document.getElementById('seat-modal').classList.contains('hidden');
+            const editingAreaId = seatModalOpen ? (AppState.selectedAreaIds[0] || AppState.activeAreaId) : null;
+
             AppState.areas = prevState.areas;
             AppState.seats = prevState.seats;
             AppState.sectors = prevState.sectors;
@@ -512,24 +516,38 @@
             AppState.areaCounter = prevState.areaCounter;
             AppState.sectorCounter = prevState.sectorCounter;
             AppState.seatCounter = prevState.seatCounter;
-            
-            AppState.selectedAreaIds = []; 
-            AppState.selectedSectorId = null;
-            AppState.activeGroupId = null;
-            AppState.isolatedAreaId = null;
-            
-            if (AppState.curveAlignment.active) {
-                AppState.curveAlignment.active = false;
-                AppState.interactionMode = null;
-            }
-            
-            renderMap();
-            updateUI();
-            
-            if (!document.getElementById('seat-modal').classList.contains('hidden') && AppState.activeAreaId) {
-                const a = AppState.areas.find(x => x.id === AppState.activeAreaId);
-                if (a) renderSeatGrid(a);
-                else closeSeatEditor();
+
+            if (seatModalOpen && editingAreaId) {
+                const a = AppState.areas.find(x => x.id === editingAreaId);
+                if (a) {
+                    AppState.selectedAreaIds = [editingAreaId];
+                    AppState.activeAreaId = editingAreaId;
+                    renderMap();
+                    updateUI();
+                    renderSeatGrid(a);
+                    updateDetailPanel();
+                } else {
+                    AppState.selectedAreaIds = [];
+                    AppState.selectedSectorId = null;
+                    AppState.activeGroupId = null;
+                    AppState.isolatedAreaId = null;
+                    closeSeatEditor();
+                    renderMap();
+                    updateUI();
+                }
+            } else {
+                AppState.selectedAreaIds = [];
+                AppState.selectedSectorId = null;
+                AppState.activeGroupId = null;
+                AppState.isolatedAreaId = null;
+
+                if (AppState.curveAlignment.active) {
+                    AppState.curveAlignment.active = false;
+                    AppState.interactionMode = null;
+                }
+
+                renderMap();
+                updateUI();
             }
         }
 
@@ -802,7 +820,19 @@
 
         // --- Atajos de Teclado (Event Listener) ---
         document.addEventListener('keydown', (e) => {
-            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+            const inInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+            const seatModalOpen = !document.getElementById('seat-modal').classList.contains('hidden');
+
+            // Ctrl+Z: always trigger app undo when seat modal is open, even from inputs
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                if (!inInput || seatModalOpen) {
+                    e.preventDefault();
+                    undo();
+                    return;
+                }
+            }
+
+            if (inInput) return;
 
             if (AppState.curveAlignment && AppState.curveAlignment.active) {
                 if (e.key === 'Enter') {
@@ -828,10 +858,6 @@
                     case 'v':
                         e.preventDefault();
                         pasteFromClipboard();
-                        break;
-                    case 'z':
-                        e.preventDefault();
-                        undo();
                         break;
                 }
             }
@@ -2088,8 +2114,24 @@
         }
 
         // --- Editor Asientos ---
+        let _seatEditorSnapshot = null;
+        let _seatEditorHistoryLength = 0;
+
         function openSeatEditor() {
             const a = AppState.areas.find(x => x.id === AppState.selectedAreaIds[0]); if (!a) return;
+            // Snapshot state before editing so we can discard changes
+            _seatEditorSnapshot = {
+                areas: JSON.parse(JSON.stringify(AppState.areas)),
+                seats: JSON.parse(JSON.stringify(AppState.seats)),
+                sectors: JSON.parse(JSON.stringify(AppState.sectors)),
+                groups: JSON.parse(JSON.stringify(AppState.groups)),
+                background: JSON.parse(JSON.stringify(AppState.background)),
+                areaCounter: AppState.areaCounter,
+                sectorCounter: AppState.sectorCounter,
+                seatCounter: AppState.seatCounter
+            };
+            _seatEditorHistoryLength = AppState.history.length;
+
             document.getElementById('modal-title').innerText = `${a.title} (${a.code})`;
             document.getElementById('modal-row-min').value = a.rowMin;
             document.getElementById('modal-row-max').value = a.rowMax;
@@ -2099,11 +2141,38 @@
             document.getElementById('reindex-seat-base').value = a.seatMin;
             const firstRowLabel = a.rowMin + (a.rowLabelOffset || 0);
             document.getElementById('relabel-row-base').value = firstRowLabel;
-            setEditMode('paint'); AppState.selectedSeatLoc = null; updateDetailPanel();
+            setEditMode('select'); AppState.selectedSeatLoc = null; updateDetailPanel();
             document.getElementById('seat-modal').classList.remove('hidden'); renderSeatGrid(a);
         }
 
-        function closeSeatEditor() { renderMap(); document.getElementById('seat-modal').classList.add('hidden'); }
+        function saveSeatEditor() {
+            // Commit: drop the snapshot and any history entries created during editing
+            _seatEditorSnapshot = null;
+            document.getElementById('seat-modal').classList.add('hidden');
+            renderMap();
+        }
+
+        function discardSeatEditor() {
+            if (_seatEditorSnapshot) {
+                // Restore to the snapshot taken when the editor was opened
+                AppState.areas = _seatEditorSnapshot.areas;
+                AppState.seats = _seatEditorSnapshot.seats;
+                AppState.sectors = _seatEditorSnapshot.sectors;
+                AppState.groups = _seatEditorSnapshot.groups;
+                AppState.background = _seatEditorSnapshot.background;
+                AppState.areaCounter = _seatEditorSnapshot.areaCounter;
+                AppState.sectorCounter = _seatEditorSnapshot.sectorCounter;
+                AppState.seatCounter = _seatEditorSnapshot.seatCounter;
+                // Remove history entries that were created during this editing session
+                AppState.history.length = _seatEditorHistoryLength;
+            }
+            _seatEditorSnapshot = null;
+            document.getElementById('seat-modal').classList.add('hidden');
+            renderMap();
+            updateUI();
+        }
+
+        function closeSeatEditor() { discardSeatEditor(); }
         function setEditMode(mode) {
             AppState.seatEditMode = mode;
             ['paint','select'].forEach(m => document.getElementById(`mode-${m}`).className = m===mode ? 'px-3 py-1 text-xs font-bold rounded-md bg-white shadow-sm text-gray-800' : 'px-3 py-1 text-xs font-bold rounded-md text-gray-500 hover:bg-gray-100');
@@ -2227,9 +2296,10 @@
             document.getElementById('seat-count-display').innerText = `${AppState.seats.filter(x=>x.areaId===area.id).length} Asientos`;
         }
 
-        function selectSeatInGrid(area, r, s) { 
-            AppState.selectedSeatLoc = {r, s}; 
-            renderSeatGrid(area); updateDetailPanel(); 
+        function selectSeatInGrid(area, r, s) {
+            resetSeatDataDirty();
+            AppState.selectedSeatLoc = {r, s};
+            renderSeatGrid(area); updateDetailPanel();
         }
 
         function updateDetailPanel() {
@@ -2336,7 +2406,11 @@
             } 
         }
         
+        let _seatDataDirty = false;
+        function markSeatDataDirty() { if (!_seatDataDirty) { saveStateToHistory(); _seatDataDirty = true; } }
+        function resetSeatDataDirty() { _seatDataDirty = false; }
         function updateSelectedSeatData() {
+            markSeatDataDirty();
             const seat = AppState.seats.find(x => x.areaId===AppState.selectedAreaIds[0] && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
             if (seat) { seat.seatId = document.getElementById('detail-seat-id').value; seat.rowNum = document.getElementById('detail-row-num').value; seat.seatNum = document.getElementById('detail-seat-num').value; }
         }
