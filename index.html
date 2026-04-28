@@ -424,13 +424,11 @@
                         <div class="pt-4 border-t"><button onclick="deleteSelectedSeat()" class="w-full py-2 bg-red-50 text-red-600 border border-red-200 rounded hover:bg-red-100 font-medium transition-colors">Eliminar</button></div>
                     </div>
                     <div id="seat-no-selection" class="text-center text-gray-400 py-10"><i data-lucide="mouse-pointer-2" class="w-8 h-8 mx-auto mb-2 opacity-50"></i><p>Selecciona un asiento o cabecera de columna/fila.</p></div>
-                    <div id="line-edit-form" class="hidden space-y-4 mt-2 pt-2 border-t">
+                    <div id="line-edit-form" class="hidden space-y-3 mt-2 pt-2 border-t">
                         <h4 class="font-bold text-gray-700 text-sm tracking-tight" id="line-edit-title">Columna seleccionada</h4>
                         <p class="text-xs text-gray-500" id="line-edit-info"></p>
-                        <div>
-                            <label class="block text-xs font-bold text-gray-500 uppercase" id="line-edit-label">Núm. asiento a aplicar</label>
-                            <input type="text" id="line-edit-value" class="w-full mt-1 p-2 border rounded">
-                        </div>
+                        <p class="text-[11px] text-gray-400 italic">Ctrl/Cmd + clic para seleccionar varias.</p>
+                        <div id="line-edit-fields" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
                         <button onclick="applyLineRenumber()" class="w-full py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 font-medium">Aplicar a todos los asientos</button>
                         <button onclick="clearLineSelection()" class="w-full py-2 bg-white border border-gray-300 text-gray-600 rounded hover:bg-gray-50 text-sm">Cancelar selección</button>
                     </div>
@@ -465,7 +463,7 @@
             boxSelectStart: { x: 0, y: 0 },
             boxSelectInitialSelection: [],
             seatEditMode: 'paint', selectedSeatLoc: null,
-            selectedColumn: null, selectedRow: null,
+            selectedColumns: [], selectedRows: [],
             showSeatsInMap: false,
             shapeClipboard: null,
             areaClipboard: [], 
@@ -2276,22 +2274,22 @@
             cont.appendChild(document.createElement('div'));
             for (let s=area.seatMin; s<=area.seatMax; s++) {
                 const d=document.createElement('div');
-                d.className='grid-header-col' + (AppState.selectedColumn===s ? ' selected' : '');
+                d.className='grid-header-col' + (AppState.selectedColumns.includes(s) ? ' selected' : '');
                 d.innerText=s;
-                d.onclick = ((col)=>()=>selectColumn(area, col))(s);
+                d.onclick = ((col)=>(e)=>selectColumn(area, col, e.ctrlKey || e.metaKey || e.shiftKey))(s);
                 cont.appendChild(d);
             }
             for (let r=area.rowMax; r>=area.rowMin; r--) {
                 const dr=document.createElement('div');
-                dr.className='grid-header-row' + (AppState.selectedRow===r ? ' selected' : '');
+                dr.className='grid-header-row' + (AppState.selectedRows.includes(r) ? ' selected' : '');
                 dr.innerText=r;
-                dr.onclick = ((row)=>()=>selectRow(area, row))(r);
+                dr.onclick = ((row)=>(e)=>selectRow(area, row, e.ctrlKey || e.metaKey || e.shiftKey))(r);
                 cont.appendChild(dr);
                 for (let s=area.seatMin; s<=area.seatMax; s++) {
                     const active = existing.find(x => x.rowPos === r && x.seatPos === s);
                     const c = document.createElement('div');
-                    const colSel = AppState.selectedColumn===s ? ' col-selected' : '';
-                    const rowSel = AppState.selectedRow===r ? ' row-selected' : '';
+                    const colSel = AppState.selectedColumns.includes(s) ? ' col-selected' : '';
+                    const rowSel = AppState.selectedRows.includes(r) ? ' row-selected' : '';
                     c.className = `seat-cell ${active?'active':''} ${AppState.selectedSeatLoc?.r===r && AppState.selectedSeatLoc?.s===s ? 'selected-seat' : ''}${colSel}${rowSel}`;
                     if (AppState.seatEditMode === 'paint') {
                         c.onmousedown=()=>{ 
@@ -2331,29 +2329,41 @@
         function selectSeatInGrid(area, r, s) {
             resetSeatDataDirty();
             AppState.selectedSeatLoc = {r, s};
-            AppState.selectedColumn = null;
-            AppState.selectedRow = null;
+            AppState.selectedColumns = [];
+            AppState.selectedRows = [];
             renderSeatGrid(area); updateDetailPanel();
         }
 
-        function selectColumn(area, s) {
+        function selectColumn(area, s, additive) {
             AppState.selectedSeatLoc = null;
-            AppState.selectedRow = null;
-            AppState.selectedColumn = AppState.selectedColumn === s ? null : s;
+            AppState.selectedRows = [];
+            const idx = AppState.selectedColumns.indexOf(s);
+            if (additive) {
+                if (idx === -1) AppState.selectedColumns.push(s);
+                else AppState.selectedColumns.splice(idx, 1);
+            } else {
+                AppState.selectedColumns = (idx !== -1 && AppState.selectedColumns.length === 1) ? [] : [s];
+            }
             renderSeatGrid(area); updateDetailPanel();
         }
 
-        function selectRow(area, r) {
+        function selectRow(area, r, additive) {
             AppState.selectedSeatLoc = null;
-            AppState.selectedColumn = null;
-            AppState.selectedRow = AppState.selectedRow === r ? null : r;
+            AppState.selectedColumns = [];
+            const idx = AppState.selectedRows.indexOf(r);
+            if (additive) {
+                if (idx === -1) AppState.selectedRows.push(r);
+                else AppState.selectedRows.splice(idx, 1);
+            } else {
+                AppState.selectedRows = (idx !== -1 && AppState.selectedRows.length === 1) ? [] : [r];
+            }
             renderSeatGrid(area); updateDetailPanel();
         }
 
         function clearLineSelection() {
             const area = AppState.areas.find(a => a.id === AppState.selectedAreaIds[0]);
-            AppState.selectedColumn = null;
-            AppState.selectedRow = null;
+            AppState.selectedColumns = [];
+            AppState.selectedRows = [];
             if (area) renderSeatGrid(area);
             updateDetailPanel();
         }
@@ -2361,27 +2371,31 @@
         function applyLineRenumber() {
             const area = AppState.areas.find(a => a.id === AppState.selectedAreaIds[0]);
             if (!area) return;
-            const value = document.getElementById('line-edit-value').value;
-            if (value === '') return;
+            const inputs = document.querySelectorAll('#line-edit-fields input.line-edit-value');
+            const updates = [];
+            inputs.forEach(inp => {
+                const value = inp.value;
+                if (value === '') return;
+                const idx = parseInt(inp.dataset.lineIdx, 10);
+                if (!Number.isNaN(idx)) updates.push({ idx, value });
+            });
+            if (updates.length === 0) return;
             saveStateToHistory();
-            if (AppState.selectedColumn !== null) {
-                const col = AppState.selectedColumn;
-                AppState.seats.forEach(seat => {
-                    if (seat.areaId === area.id && seat.seatPos === col) seat.seatNum = value;
+            const isCol = AppState.selectedColumns.length > 0;
+            AppState.seats.forEach(seat => {
+                if (seat.areaId !== area.id) return;
+                updates.forEach(u => {
+                    if (isCol && seat.seatPos === u.idx) seat.seatNum = u.value;
+                    else if (!isCol && seat.rowPos === u.idx) seat.rowNum = u.value;
                 });
-            } else if (AppState.selectedRow !== null) {
-                const row = AppState.selectedRow;
-                AppState.seats.forEach(seat => {
-                    if (seat.areaId === area.id && seat.rowPos === row) seat.rowNum = value;
-                });
-            }
+            });
             renderSeatGrid(area);
         }
 
         function updateDetailPanel() {
             const areaId = AppState.selectedAreaIds[0];
             const seat = AppState.seats.find(x => x.areaId===areaId && x.rowPos===AppState.selectedSeatLoc?.r && x.seatPos===AppState.selectedSeatLoc?.s);
-            const lineMode = AppState.selectedColumn !== null || AppState.selectedRow !== null;
+            const lineMode = AppState.selectedColumns.length > 0 || AppState.selectedRows.length > 0;
             document.getElementById('seat-details-panel').classList.remove('hidden');
             document.getElementById('seat-edit-form').classList.toggle('hidden', !seat);
             document.getElementById('line-edit-form').classList.toggle('hidden', !lineMode);
@@ -2394,14 +2408,39 @@
                 document.getElementById('detail-seat-num').value = seat.seatNum;
             }
             if (lineMode) {
-                const isCol = AppState.selectedColumn !== null;
-                const idx = isCol ? AppState.selectedColumn : AppState.selectedRow;
-                const count = AppState.seats.filter(x => x.areaId===areaId && (isCol ? x.seatPos===idx : x.rowPos===idx)).length;
-                document.getElementById('line-edit-title').innerText = isCol ? `Columna ${idx} seleccionada` : `Fila ${idx} seleccionada`;
-                document.getElementById('line-edit-info').innerText = `${count} asiento(s) en esta ${isCol ? 'columna' : 'fila'}.`;
-                document.getElementById('line-edit-label').innerText = isCol ? 'Núm. asiento a aplicar' : 'Núm. fila a aplicar';
-                document.getElementById('line-edit-value').value = '';
-                document.getElementById('line-edit-value').focus();
+                const isCol = AppState.selectedColumns.length > 0;
+                const items = [...(isCol ? AppState.selectedColumns : AppState.selectedRows)].sort((a,b) => a-b);
+                const totalCount = AppState.seats.filter(x => x.areaId===areaId && (isCol ? items.includes(x.seatPos) : items.includes(x.rowPos))).length;
+                const labelType = isCol ? 'columna' : 'fila';
+                document.getElementById('line-edit-title').innerText = items.length === 1
+                    ? `${isCol ? 'Columna' : 'Fila'} ${items[0]} seleccionada`
+                    : `${items.length} ${labelType}s seleccionadas`;
+                document.getElementById('line-edit-info').innerText = `${totalCount} asiento(s) en ${items.length === 1 ? 'esta ' + labelType : 'estas ' + labelType + 's'}.`;
+                const fieldsContainer = document.getElementById('line-edit-fields');
+                fieldsContainer.innerHTML = '';
+                const placeholder = isCol ? 'Núm. asiento' : 'Núm. fila';
+                items.forEach(idx => {
+                    const cnt = AppState.seats.filter(x => x.areaId===areaId && (isCol ? x.seatPos===idx : x.rowPos===idx)).length;
+                    const wrap = document.createElement('div');
+                    wrap.className = 'flex items-center gap-2';
+                    wrap.innerHTML = `
+                        <span class="text-xs font-bold text-gray-600 w-24 shrink-0">${isCol ? 'Columna' : 'Fila'} ${idx}<span class="text-gray-400 font-normal"> (${cnt})</span></span>
+                        <input type="text" data-line-idx="${idx}" class="line-edit-value flex-1 p-2 border rounded" placeholder="${placeholder}" />
+                    `;
+                    fieldsContainer.appendChild(wrap);
+                });
+                const inputs = fieldsContainer.querySelectorAll('input.line-edit-value');
+                inputs.forEach((inp, i) => {
+                    inp.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            const next = inputs[i + 1];
+                            if (next) next.focus();
+                            else applyLineRenumber();
+                        }
+                    });
+                });
+                if (inputs[0]) inputs[0].focus();
             }
         }
 
