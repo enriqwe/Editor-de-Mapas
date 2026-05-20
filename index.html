@@ -860,23 +860,21 @@
             const newSelection = [];
             
             AppState.areaClipboard.forEach(item => {
-                AppState.areaCounter++;
-                const newAreaId = `temp-area-${AppState.areaCounter}`;
+                const newAreaId = generateUniqueAreaId();
                 const newArea = JSON.parse(JSON.stringify(item.area));
                 newArea.id = newAreaId;
                 newArea.title = `${newArea.title} (Copia)`;
-                delete newArea.groupId; 
-                
+                delete newArea.groupId;
+
                 newArea.points = newArea.points.map(p => ({ x: p.x + 20, y: p.y + 20 }));
-                
+
                 AppState.areas.push(newArea);
                 newSelection.push(newAreaId);
 
                 item.seats.forEach(seat => {
-                    AppState.seatCounter++;
                     const newSeat = JSON.parse(JSON.stringify(seat));
-                    newSeat.seatId = `temp-seat-${AppState.seatCounter}`;
-                    newSeat.areaId = newAreaId; 
+                    newSeat.seatId = generateUniqueSeatId();
+                    newSeat.areaId = newAreaId;
                     AppState.seats.push(newSeat);
                 });
             });
@@ -948,7 +946,27 @@
                 return v.toString(16);
             });
         }
-        
+
+        function generateUniqueAreaId() {
+            const existing = new Set(AppState.areas.map(a => a.id));
+            let id;
+            do {
+                AppState.areaCounter++;
+                id = `temp-area-${AppState.areaCounter}`;
+            } while (existing.has(id));
+            return id;
+        }
+
+        function generateUniqueSeatId() {
+            const existing = new Set(AppState.seats.map(s => s.seatId));
+            let id;
+            do {
+                AppState.seatCounter++;
+                id = `temp-seat-${AppState.seatCounter}`;
+            } while (existing.has(id));
+            return id;
+        }
+
         function getCentroid(points) {
             let x = 0, y = 0; points.forEach(p => { x += p.x; y += p.y; });
             return { x: x / points.length, y: y / points.length };
@@ -1698,8 +1716,7 @@
                 const defId = 'default-sec';
                 AppState.sectors.push({ id: defId, title: 'Sector General' });
             }
-            AppState.areaCounter++;
-            const newId = `temp-area-${AppState.areaCounter}`;
+            const newId = generateUniqueAreaId();
             const viewport = document.getElementById('main-viewport');
             const rect = viewport.getBoundingClientRect();
             const offset = (AppState.areas.length % 10) * 20; 
@@ -2342,8 +2359,7 @@
             const originalSeats = AppState.seats.filter(s => s.areaId === area.id);
             const newAreaIds = [];
             subAreas.forEach((sa, i) => {
-                AppState.areaCounter++;
-                const newId = `temp-area-${AppState.areaCounter}`;
+                const newId = generateUniqueAreaId();
                 newAreaIds.push(newId);
                 const newArea = JSON.parse(JSON.stringify(area));
                 newArea.id = newId;
@@ -2353,14 +2369,17 @@
                 newArea.seatMax = sa.seatMax;
                 newArea.rowMin = sa.rowMin;
                 newArea.rowMax = sa.rowMax;
+                const off = i * 20;
+                if (off > 0 && Array.isArray(newArea.points)) {
+                    newArea.points = newArea.points.map(p => ({ x: p.x + off, y: p.y + off }));
+                }
                 delete newArea.groupId;
                 AppState.areas.push(newArea);
                 originalSeats.forEach(seat => {
                     if (seat.seatPos >= sa.seatMin && seat.seatPos <= sa.seatMax &&
                         seat.rowPos >= sa.rowMin && seat.rowPos <= sa.rowMax) {
-                        AppState.seatCounter++;
                         const newSeat = JSON.parse(JSON.stringify(seat));
-                        newSeat.seatId = `temp-seat-${AppState.seatCounter}`;
+                        newSeat.seatId = generateUniqueSeatId();
                         newSeat.areaId = newId;
                         newSeat.sectorId = area.sectorId;
                         AppState.seats.push(newSeat);
@@ -2583,14 +2602,13 @@
         function toggleSeat(area, r, s, add) {
             const idx = AppState.seats.findIndex(x => x.areaId===area.id && x.rowPos===r && x.seatPos===s);
             if (add && idx===-1) {
-                AppState.seatCounter++;
                 const offset = area.rowLabelOffset || 0;
                 const calculatedRowNum = (r + offset).toString();
-                AppState.seats.push({ 
-                    seatId: `temp-seat-${AppState.seatCounter}`, 
-                    areaId: area.id, sectorId: area.sectorId, rowPos: r, seatPos: s, 
-                    rowNum: calculatedRowNum, 
-                    seatNum: s.toString() 
+                AppState.seats.push({
+                    seatId: generateUniqueSeatId(),
+                    areaId: area.id, sectorId: area.sectorId, rowPos: r, seatPos: s,
+                    rowNum: calculatedRowNum,
+                    seatNum: s.toString()
                 });
             }
             else if (!add && idx!==-1) AppState.seats.splice(idx, 1);
